@@ -131,17 +131,22 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         }
     }
 
+    let instance = if data.variants.is_empty() {
+        quote!(*self)
+    } else {
+        quote!(self)
+    };
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     Ok(quote! {
         impl #impl_generics #runtime::Problem for #name #type_generics #where_clause {
             fn definition(&self) -> &'static #runtime::ProblemDefinition {
-                match self { #(#definition_arms),* }
+                match #instance { #(#definition_arms),* }
             }
             fn definitions() -> &'static [#runtime::ProblemDefinition] {
                 &[#(#definitions),*]
             }
             fn detail(&self) -> ::std::option::Option<::std::string::String> {
-                match self { #(#detail_arms),* }
+                match #instance { #(#detail_arms),* }
             }
         }
     })
