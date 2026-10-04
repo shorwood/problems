@@ -415,15 +415,28 @@ impl<E: Problem> salvo::Scribe for Report<E> {
 impl<E: Problem + Send> warp::Reply for Report<E> {
     /// Returns the public JSON document with its declared status and problem media type.
     fn into_response(self) -> warp::reply::Response {
-        warp::Reply::into_response(warp::reply::with_header(
-            warp::reply::with_status(
-                warp::reply::json(&self.details()),
-                self.problem().definition().status,
-            ),
-            "content-type",
-            "application/problem+json",
-        ))
+        warp_response(&self)
     }
+}
+
+#[cfg(feature = "warp")]
+impl<E: Problem + Sync> warp::Reply for &Report<E> {
+    /// Renders an owned response without cloning or consuming the original error.
+    fn into_response(self) -> warp::reply::Response {
+        warp_response(self)
+    }
+}
+
+#[cfg(feature = "warp")]
+fn warp_response<E: Problem>(report: &Report<E>) -> warp::reply::Response {
+    warp::Reply::into_response(warp::reply::with_header(
+        warp::reply::with_status(
+            warp::reply::json(&report.details()),
+            report.problem().definition().status,
+        ),
+        "content-type",
+        "application/problem+json",
+    ))
 }
 
 /****************************************/

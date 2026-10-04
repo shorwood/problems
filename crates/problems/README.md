@@ -310,6 +310,71 @@ declared variants. Aide reads all wrapped definitions without constructing error
 Manual implementations should return a slice's `.iter()` or chain other problem
 iterators; callers that need indexing can collect the references into a `Vec`.
 
+### Warp rejection recovery
+
+Warp applications can wrap a report in an application-owned rejection and
+recover it through a borrowed reply. The wrapper's problem type must satisfy
+`Send + Sync + 'static`; it does not need `Clone`.
+
+```rust
+# fn main() {
+# #[cfg(feature = "warp")]
+# {
+use problems::{IntoReport, Report};
+use warp::{Filter, Rejection, Reply};
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum AppProblem {
+    #[error("private storage failure: {source}")]
+    #[problem(503)]
+    Unavailable { source: std::io::Error },
+}
+
+#[derive(Debug)]
+struct AppRejection(Report<AppProblem>);
+impl warp::reject::Reject for AppRejection {}
+
+async fn create() -> Result<(), AppProblem> {
+    Err(AppProblem::Unavailable {
+        source: std::io::Error::other("private diagnostic"),
+    })
+}
+
+async fn create_handler() -> Result<&'static str, Rejection> {
+    create().await.map_err(|problem| {
+        warp::reject::custom(AppRejection(problem.into_report()))
+    })?;
+    Ok("created")
+}
+
+async fn recover_problem(rejection: Rejection)
+    -> Result<warp::reply::Response, Rejection>
+{
+    if let Some(problem) = rejection.find::<AppRejection>() {
+        return Ok((&problem.0).into_response());
+    }
+    Err(rejection)
+}
+
+let routes = warp::path("create")
+    .and(warp::path::end())
+    .and(warp::post())
+    .and_then(create_handler)
+    .recover(recover_problem);
+# let _ = routes;
+# }
+# }
+```
+
+Recovery renders an owned response while borrowing the stored report. It leaves
+unrelated rejections for Warp or subsequent application recovery to handle.
+Apply recovery after combining routes when alternative routes should be tried
+before an application rejection is turned into a response. Inspect diagnostics
+inside recovery before returning the response if the application needs them.
+The library implements `Reply` for owned and borrowed reports; applications own
+their `Reject` wrapper and classification policy.
+
 ### Running examples
 
 Each example serves `GET /problem` at `127.0.0.1:3000` and returns a conflict
