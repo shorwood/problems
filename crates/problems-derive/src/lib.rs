@@ -21,7 +21,8 @@ mod runtime_path;
 /// an existing public identity. Duplicate type URIs are rejected. Optional `status`
 /// accepts a constant path, including `<Type as Trait>::STATUS`, and defaults
 /// to 500. Optional `detail` supports Rust
-/// named-field formatting. Other fields remain diagnostic.
+/// named-field formatting with literal width and precision; dynamic formatting
+/// parameters are unsupported. Other fields remain diagnostic.
 #[proc_macro_derive(Problem, attributes(problem))]
 pub fn derive_problem(input: TokenStream) -> TokenStream {
     expand::expand(parse_macro_input!(input as DeriveInput))

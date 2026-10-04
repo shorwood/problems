@@ -39,6 +39,22 @@ pub(crate) fn detail_fields(
                         "detail formatting requires named variant fields",
                     )
                 })?;
+                // A fill character followed by alignment is literal, even `$` or `*`.
+                let mut parameters = specifier.chars();
+                let mut prefix = parameters.clone();
+                if prefix.next().is_some()
+                    && prefix.next().is_some_and(|c| matches!(c, '<' | '^' | '>'))
+                {
+                    parameters.next();
+                    parameters.next();
+                }
+                let parameters = parameters.as_str();
+                if parameters.contains('$') || parameters.contains(".*") {
+                    return Err(syn::Error::new(
+                        detail.span(),
+                        "dynamic width and precision are not supported in detail; use named variant fields with literal width and precision",
+                    ));
+                }
                 let trait_name = match specifier.chars().last() {
                     Some('?') => "Debug",
                     Some('x') => "LowerHex",

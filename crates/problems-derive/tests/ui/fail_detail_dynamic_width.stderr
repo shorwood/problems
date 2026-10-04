@@ -1,0 +1,5 @@
+error: dynamic width and precision are not supported in detail; use named variant fields with literal width and precision
+ --> tests/ui/fail_detail_dynamic_width.rs:7:18
+  |
+7 |         detail = "{value:width$}"
+  |                  ^^^^^^^^^^^^^^^^
