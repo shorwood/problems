@@ -130,6 +130,11 @@ let report = AppProblem::Unavailable
     .with_instance("urn:uuid:550e8400-e29b-41d4-a716-446655440000");
 
 let details = report.into_details();
+assert_eq!(details.detail(), None);
+assert_eq!(
+    details.instance(),
+    Some("urn:uuid:550e8400-e29b-41d4-a716-446655440000")
+);
 let body = serde_json::to_value(details)?;
 assert_eq!(body["instance"], "urn:uuid:550e8400-e29b-41d4-a716-446655440000");
 # Ok::<(), serde_json::Error>(())
@@ -139,6 +144,11 @@ assert_eq!(body["instance"], "urn:uuid:550e8400-e29b-41d4-a716-446655440000");
 projection. Without an override, the error's instance is preserved; if neither
 supplies one, the member is omitted. The caller supplies a valid URI reference
 identifying this occurrence ([RFC 9457, section 3.1.5](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.5)).
+
+Read optional members with `ProblemDetails::detail()` and
+`ProblemDetails::instance()`. Both return `Option<&str>` borrowed from the
+document without allocation; absent members return `None`. Unlike the methods
+on the `Problem` trait, these getters do not construct owned strings.
 
 `details()` retains the report and clones an attached instance into the owned
 document. `into_details()` consumes the report and moves that string. Owned

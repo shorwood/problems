@@ -181,6 +181,18 @@ impl ProblemDetails {
     pub const fn title(&self) -> &'static str {
         self.title
     }
+
+    /// Borrow the public explanation for this occurrence.
+    /// Returns `None` when the member is omitted from the document.
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+
+    /// Borrow the URI reference identifying this occurrence.
+    /// Returns `None` when the member is omitted from the document.
+    pub fn instance(&self) -> Option<&str> {
+        self.instance.as_deref()
+    }
 }
 
 impl<E: Problem> From<&Report<E>> for ProblemDetails {
