@@ -1,4 +1,4 @@
-use problems::{GenericProblem, Problem, ProblemDefinition, ProblemDetails, Report, StatusCode};
+use problems::{Problem, ProblemDefinition, ProblemDetails, ProblemDocument, Report, StatusCode};
 
 #[derive(Debug, thiserror::Error)]
 #[error("private diagnostic")]
@@ -11,6 +11,12 @@ static DEFINITION: ProblemDefinition = ProblemDefinition {
 };
 
 impl Problem for Failure {
+    type Data = ();
+
+    type DataRef<'data>
+        = ()
+    where
+        Self: 'data;
     fn definition(&self) -> &'static ProblemDefinition {
         &DEFINITION
     }
@@ -31,37 +37,35 @@ fn details() -> ProblemDetails {
 }
 
 #[test]
-fn full_equality_is_symmetric_across_document_types() {
+fn converted_and_decoded_documents_are_equal() {
     fn requires_eq<T: Eq>(_: &T) {}
     let producer = details();
-    let received = GenericProblem::from(producer.clone());
+    let received = ProblemDocument::from(producer.clone());
     requires_eq(&producer);
     requires_eq(&received);
     assert_eq!(producer, producer.clone());
     assert_eq!(received, received.clone());
-    assert_eq!(received, producer);
-    assert_eq!(producer, received);
-    let decoded: GenericProblem =
+    let decoded: ProblemDocument =
         serde_json::from_value(serde_json::to_value(&producer).unwrap()).unwrap();
     assert_eq!(received, decoded);
-    assert_eq!(decoded, producer);
+    assert_eq!(decoded, received);
 }
 
 #[test]
 fn instance_differences_match_failure_but_not_document() {
     let producer = details();
+    let expected = ProblemDocument::from(producer.clone());
     for instance in [None, Some("urn:test:occurrence:2")] {
         let mut body = serde_json::to_value(&producer).unwrap();
         body.as_object_mut().unwrap().remove("instance");
         if let Some(instance) = instance {
             body["instance"] = instance.into();
         }
-        let received: GenericProblem = serde_json::from_value(body).unwrap();
+        let received: ProblemDocument = serde_json::from_value(body).unwrap();
         assert!(received.matches(&producer));
         assert!(received.is_type(&DEFINITION));
-        assert_ne!(received, producer);
-        assert_ne!(producer, received);
-        assert_ne!(received, GenericProblem::from(producer.clone()));
+        assert_ne!(received, expected);
+        assert_ne!(expected, received);
     }
     let other_occurrence = Report::new(Failure(true))
         .with_instance("urn:test:occurrence:2")
@@ -72,6 +76,7 @@ fn instance_differences_match_failure_but_not_document() {
 #[test]
 fn matching_requires_every_failure_member() {
     let producer = details();
+    let expected = ProblemDocument::from(producer.clone());
     for (field, replacement) in [
         ("type", serde_json::json!("urn:test:other")),
         ("title", serde_json::json!("Other")),
@@ -84,20 +89,21 @@ fn matching_requires_every_failure_member() {
     ] {
         let mut body = serde_json::to_value(&producer).unwrap();
         body[field] = replacement;
-        let received: GenericProblem = serde_json::from_value(body).unwrap();
+        let received: ProblemDocument = serde_json::from_value(body).unwrap();
         assert!(!received.matches(&producer), "{field}");
-        assert_ne!(received, producer);
-        assert_ne!(producer, received);
+        assert_ne!(received, expected);
+        assert_ne!(expected, received);
     }
 }
 
 #[test]
 fn omitted_optional_members_match_each_other() {
     let producer = Report::new(Failure(false)).into_details();
-    let received: GenericProblem =
+    let received: ProblemDocument =
         serde_json::from_value(serde_json::to_value(&producer).unwrap()).unwrap();
     assert_eq!(received.instance(), None);
     assert_eq!(received.detail(), None);
-    assert_eq!(received, producer);
     assert!(received.matches(&producer));
+    let expected = ProblemDocument::from(producer);
+    assert_eq!(received, expected);
 }

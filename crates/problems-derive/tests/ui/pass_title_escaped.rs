@@ -14,7 +14,7 @@ fn main() {
         name: "public".into(),
     }
     .into_report();
-    let body = serde_json::to_value(report.details()).unwrap();
+    let body = serde_json::to_value(report.as_details()).unwrap();
     assert_eq!(body["title"], "Expected {{}}");
     assert_eq!(body["detail"], "Invalid public");
 }

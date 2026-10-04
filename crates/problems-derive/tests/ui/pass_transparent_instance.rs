@@ -3,6 +3,11 @@ use issues::{Problem, ProblemDefinition, StatusCode};
 #[error("private")]
 struct Inner;
 impl Problem for Inner {
+    type Data = ();
+    type DataRef<'data>
+        = ()
+    where
+        Self: 'data;
     fn definition(&self) -> &'static ProblemDefinition {
         &ProblemDefinition {
             type_uri: "urn:test:inner",

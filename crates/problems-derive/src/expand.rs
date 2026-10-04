@@ -65,18 +65,6 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         } else {
             quote!(Self::#variant_name)
         };
-        for field in variant_fields {
-            if let Some(attribute) = field.attrs.iter().find(|a| a.path().is_ident("problem")) {
-                return Err(syn::Error::new(
-                    attribute.span(),
-                    if is_struct {
-                        "problem attributes belong on the struct, not fields"
-                    } else {
-                        "problem attributes belong on variants, not fields"
-                    },
-                ));
-            }
-        }
         if transparent(attributes)? {
             if is_struct {
                 return Err(syn::Error::new(
@@ -235,6 +223,14 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         }
     }
 
+    let crate::data::Projection {
+        declarations,
+        owned,
+        borrowed,
+        borrow_arms,
+        move_arms,
+    } = crate::data::projection(&input, &runtime, &mut generics)?;
+
     let instance = if entries.is_empty() {
         quote!(*self)
     } else {
@@ -244,10 +240,19 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         input.generics.split_for_impl();
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     Ok(quote! {
+        #declarations
         impl #constant_impl_generics #name #constant_type_generics #constant_where_clause {
             #(#definition_constants)*
         }
         impl #impl_generics #runtime::Problem for #name #type_generics #where_clause {
+            type Data = #owned;
+            type DataRef<'__problem_data> = #borrowed where Self: '__problem_data;
+            fn data(&self) -> Option<Self::DataRef<'_>> {
+                match #instance { #(#borrow_arms),* }
+            }
+            fn into_data(self) -> Option<Self::Data> {
+                match self { #(#move_arms),* }
+            }
             fn definition(&self) -> &'static #runtime::ProblemDefinition {
                 match #instance { #(#definition_arms),* }
             }

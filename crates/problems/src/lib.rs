@@ -9,25 +9,44 @@
 
 extern crate self as problems;
 
+// Re-export dependencies used by generated problem data containers.
 pub use http::StatusCode;
-use serde::{Deserialize, Deserializer, Serialize};
-use std::error::Error;
 
-#[cfg(feature = "aide")]
-use aide::{
-    OperationOutput,
-    generate::GenContext,
-    openapi::{MediaType, Operation, Response, SchemaObject},
-};
-
-#[cfg(feature = "axum")]
-use axum::{Json, http::header::CONTENT_TYPE, response::IntoResponse};
-
-#[cfg(feature = "aide")]
-use std::collections::BTreeMap;
-
+// Re-export the derive macro when enabled.
 #[cfg(feature = "derive")]
 pub use problems_derive::Problem;
+
+/****************************************/
+/* Macro Support                        */
+/****************************************/
+
+/// Support used by generated problem data containers.
+#[doc(hidden)]
+pub mod __private {
+    #[cfg(feature = "schemars")]
+    pub use schemars;
+    pub use serde;
+
+    #[doc(hidden)]
+    #[cfg(feature = "schemars")]
+    #[macro_export]
+    macro_rules! __problem_data {
+        ($schema_crate:literal, $item:item) => {
+            #[derive($crate::__private::schemars::JsonSchema)]
+            #[schemars(crate = $schema_crate)]
+            $item
+        };
+    }
+
+    #[doc(hidden)]
+    #[cfg(not(feature = "schemars"))]
+    #[macro_export]
+    macro_rules! __problem_data {
+        ($schema_crate:literal, $item:item) => {
+            $item
+        };
+    }
+}
 
 /****************************************/
 /* Problem Definition                   */
@@ -53,7 +72,7 @@ pub struct ProblemDefinition {
 
 /// Attaches public problem metadata to an ordinary Rust error.
 /// Diagnostic formatting and source chains remain the responsibility of the error.
-/// Only the definition, detail, and instance enter the public document.
+/// Only the definition, detail, instance, and explicitly selected data enter the public document.
 ///
 /// Implement this trait directly, or use `#[derive(Problem)]` with the `derive`
 /// feature, enabled by default. Unit, named-field, and tuple variants or structs
@@ -79,6 +98,12 @@ pub struct ProblemDefinition {
 /// Single-field tuple variants marked `#[problem(transparent)]` delegate their
 /// definition, detail, and instance to the wrapped `Problem`. Their definitions
 /// are chained into the enclosing enum's iterator in variant order.
+///
+/// Select named fields with `#[problem(data)]`, or rename with
+/// `#[problem(data = "public_name")]`. Tuple fields require explicit names.
+/// Sources cannot be selected. The generated `<Type>Data` container is generic
+/// over selected fields; borrowed projections use references, consuming
+/// projections move fields.
 ///
 /// The derive leaves `Display` and `Error` to your error implementation.
 /// For example, declare a conflict and include its name in the public explanation:
@@ -106,7 +131,33 @@ pub struct ProblemDefinition {
 /// assert_eq!(report.problem().detail().as_deref(), Some("The name 'example' is already in use."));
 /// # }
 /// ```
-pub trait Problem: Error {
+pub trait Problem: std::error::Error {
+    /// Owned fields explicitly selected for the public document.
+    type Data: serde::Serialize
+    where
+        Self: Sized;
+
+    /// Borrowed projection of selected public fields.
+    type DataRef<'a>: serde::Serialize
+    where
+        Self: Sized + 'a;
+
+    /// Borrow selected public fields without cloning diagnostic state.
+    fn data(&self) -> Option<Self::DataRef<'_>>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    /// Move selected public fields into an owned document.
+    fn into_data(self) -> Option<Self::Data>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// Metadata for this occurrence's problem type.
     fn definition(&self) -> &'static ProblemDefinition;
 
@@ -137,12 +188,12 @@ pub trait Problem: Error {
 /// Details of an HTTP API error, following RFC 9457.
 ///
 /// Identifies the problem type and describes the individual occurrence.
-/// Optional members are omitted when unavailable. Equality compares all five
+/// Optional members are omitted when unavailable. Equality compares all
 /// public members, including the occurrence URI.
 #[must_use]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub struct ProblemDetails {
+pub struct ProblemDetails<D = ()> {
     /// URI reference identifying the problem type.
     ///
     /// Use this value as the primary identifier when handling errors.
@@ -179,6 +230,10 @@ pub struct ProblemDetails {
     /// Omitted when unavailable.
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
+
+    /// Explicit public values for programmatic handling or interpolation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<D>,
 }
 
 fn serialize_status<S: serde::Serializer>(
@@ -188,7 +243,7 @@ fn serialize_status<S: serde::Serializer>(
     serializer.serialize_u16(status.as_u16())
 }
 
-impl ProblemDetails {
+impl<D> ProblemDetails<D> {
     /// HTTP status represented by this body.
     pub const fn status(&self) -> StatusCode {
         self.status
@@ -215,42 +270,36 @@ impl ProblemDetails {
     pub fn instance(&self) -> Option<&str> {
         self.instance.as_deref()
     }
-}
 
-impl<E: Problem> From<&Report<E>> for ProblemDetails {
-    fn from(report: &Report<E>) -> Self {
-        let problem = report.problem();
-        let definition = problem.definition();
-        Self {
-            type_uri: definition.type_uri,
-            title: definition.title,
-            status: definition.status,
-            detail: problem.detail(),
-            instance: report.instance.clone().or_else(|| problem.instance()),
-        }
+    /// Borrow explicitly selected public values.
+    pub fn data(&self) -> Option<&D> {
+        self.data.as_ref()
     }
 }
 
 /****************************************/
-/* Generic Problem                      */
+/* Problem Document                     */
 /****************************************/
 
-/// Owned public problem data decoded from a received document.
+/// Owned public problem metadata with a caller-selected payload type.
 ///
 /// Missing type defaults to `about:blank`; other missing members are absent.
 /// Unknown extensions are discarded. Decoding uses ordinary Serde type checks:
 /// incorrectly typed members fail decoding rather than being ignored as RFC 9457
 /// prescribes. Status values must be integers within 100–999.
 ///
-/// Equality compares all five public members, including the occurrence URI.
-/// `matches()` compares public failure data while ignoring that URI.
+/// Equality compares all public members, including the occurrence URI.
+/// `matches()` compares with typed producer details while ignoring that URI.
 ///
 /// This document retains neither diagnostic sources nor static definitions. It
 /// does not implement `Problem` or framework response traits.
+/// `D` selects the public payload type used by the deserializer. Use `()` for
+/// problems without a payload or a format's value type for arbitrary data.
+/// Missing or null data is absent.
 #[must_use]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-pub struct GenericProblem {
+pub struct ProblemDocument<D = ()> {
     /// URI reference identifying the received problem type.
     ///
     /// Defaults to `about:blank` when the member is absent.
@@ -282,22 +331,25 @@ pub struct GenericProblem {
     ///
     /// Absent when unavailable. Relative references remain unresolved.
     instance: Option<String>,
+
+    /// Explicit public values decoded into the caller's payload type.
+    data: Option<D>,
 }
 
 fn default_type() -> String {
     "about:blank".into()
 }
 
-fn deserialize_status<'de, D: Deserializer<'de>>(
+fn deserialize_status<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<StatusCode>, D::Error> {
-    Option::<u16>::deserialize(deserializer)?
+    <Option<u16> as serde::Deserialize<'de>>::deserialize(deserializer)?
         .map(StatusCode::from_u16)
         .transpose()
         .map_err(serde::de::Error::custom)
 }
 
-impl GenericProblem {
+impl<D> ProblemDocument<D> {
     /// Compare the received problem identity with a declared definition.
     ///
     /// Compares only the type URI, not occurrence data or diagnostics. Relative
@@ -306,7 +358,7 @@ impl GenericProblem {
     /// ```rust
     /// # #[cfg(feature = "derive")]
     /// # {
-    /// use problems::GenericProblem;
+    /// use problems::ProblemDocument;
     ///
     /// #[derive(Debug, thiserror::Error, problems::Problem)]
     /// #[problem(prefix = "urn:example")]
@@ -314,12 +366,13 @@ impl GenericProblem {
     ///     #[error("private diagnostic: {source}")]
     ///     #[problem(409)]
     ///     NameConflict { source: std::io::Error },
+    ///
     ///     #[error("resource missing")]
     ///     #[problem(404)]
     ///     Missing,
     /// }
     ///
-    /// let received: GenericProblem = serde_json::from_value(serde_json::json!({
+    /// let received: ProblemDocument = serde_json::from_value(serde_json::json!({
     ///     "type": "urn:example:name-conflict"
     /// }))?;
     ///
@@ -333,15 +386,16 @@ impl GenericProblem {
         self.type_uri == definition.type_uri
     }
 
-    /// Compare public failure data with a producer document, ignoring instance.
+    /// Compare public failure data with typed producer details, ignoring instance.
     ///
-    /// Type URI, title, status, and detail must match exactly. Missing members
-    /// are not wildcards. Use `==` to compare the occurrence URI as well.
+    /// Type URI, title, status, detail, and data must match exactly. Missing members
+    /// are not wildcards. Convert details with `ProblemDocument::from()` and use
+    /// `==` to compare the occurrence URI as well.
     ///
     /// ```rust
     /// # #[cfg(feature = "derive")]
     /// # {
-    /// use problems::{GenericProblem, IntoReport};
+    /// use problems::{ProblemDocument, IntoReport};
     ///
     /// #[derive(Debug, thiserror::Error, problems::Problem)]
     /// #[problem(prefix = "urn:example")]
@@ -358,7 +412,7 @@ impl GenericProblem {
     /// .with_instance("/occurrences/1")
     /// .into_details();
     ///
-    /// let received: GenericProblem = serde_json::from_value(serde_json::json!({
+    /// let received: ProblemDocument = serde_json::from_value(serde_json::json!({
     ///     "type": "urn:example:name-conflict",
     ///     "title": "Name Conflict",
     ///     "status": 409,
@@ -368,7 +422,7 @@ impl GenericProblem {
     ///
     /// // The same failure occurred twice, with different occurrence URIs.
     /// assert!(received.matches(&expected));
-    /// assert_ne!(received, expected);
+    /// assert_ne!(received, ProblemDocument::from(expected));
     ///
     /// let different_name = CreateProblem::NameConflict {
     ///     name: "weekly".into(),
@@ -381,11 +435,19 @@ impl GenericProblem {
     /// # }
     /// # Ok::<(), serde_json::Error>(())
     /// ```
-    pub fn matches(&self, details: &ProblemDetails) -> bool {
-        self.type_uri == details.type_uri
-            && self.title() == Some(details.title)
-            && self.status == Some(details.status)
-            && self.detail() == details.detail()
+    pub fn matches<P>(&self, expected: &ProblemDetails<P>) -> bool
+    where
+        D: PartialEq<P>,
+    {
+        self.type_uri() == expected.type_uri()
+            && self.title() == Some(expected.title())
+            && self.status() == Some(expected.status())
+            && self.detail() == expected.detail()
+            && match (self.data(), expected.data()) {
+                (None, None) => true,
+                (Some(received), Some(expected)) => received == expected,
+                _ => false,
+            }
     }
 
     /// Problem identity, defaulting to `about:blank` when unavailable.
@@ -416,31 +478,23 @@ impl GenericProblem {
     pub fn instance(&self) -> Option<&str> {
         self.instance.as_deref()
     }
-}
 
-impl PartialEq<ProblemDetails> for GenericProblem {
-    /// Compare every public member without allocating or projecting an error.
-    fn eq(&self, details: &ProblemDetails) -> bool {
-        self.matches(details) && self.instance() == details.instance()
+    /// Borrow explicitly selected public values.
+    pub fn data(&self) -> Option<&D> {
+        self.data.as_ref()
     }
 }
 
-impl PartialEq<GenericProblem> for ProblemDetails {
-    /// Compare every public member using the same rule in either direction.
-    fn eq(&self, received: &GenericProblem) -> bool {
-        received == self
-    }
-}
-
-impl From<ProblemDetails> for GenericProblem {
-    /// Own the static metadata and move the optional strings from the document.
-    fn from(details: ProblemDetails) -> Self {
+impl<D> From<ProblemDetails<D>> for ProblemDocument<D> {
+    /// Own the metadata and move the optional payload without serialization.
+    fn from(details: ProblemDetails<D>) -> Self {
         Self {
             type_uri: details.type_uri.into(),
             title: Some(details.title.into()),
             status: Some(details.status),
             detail: details.detail,
             instance: details.instance,
+            data: details.data,
         }
     }
 }
@@ -482,7 +536,7 @@ impl<E: Problem> Report<E> {
     /// Consume the report and construct an owned public document.
     /// Moves the attached instance rather than cloning it. The original error
     /// is dropped; inspect diagnostics before consuming the report.
-    pub fn into_details(self) -> ProblemDetails {
+    pub fn into_details(self) -> ProblemDetails<E::Data> {
         let definition = self.problem.definition();
         ProblemDetails {
             type_uri: definition.type_uri,
@@ -490,6 +544,7 @@ impl<E: Problem> Report<E> {
             status: definition.status,
             detail: self.problem.detail(),
             instance: self.instance.or_else(|| self.problem.instance()),
+            data: self.problem.into_data(),
         }
     }
 
@@ -504,46 +559,39 @@ impl<E: Problem> Report<E> {
         self.problem
     }
 
-    /// Constructs an owned document from the error's declared public metadata.
-    /// Diagnostic fields and source errors are omitted. The document remains
-    /// usable after the report is dropped and accepts any Serde encoder.
+    /// Project public fields by reference. Serialize before dropping the report.
+    /// Detail rendering and an attached instance still produce owned strings.
     ///
-    /// For example, serialize a conflict without exposing its diagnostic message:
+    /// ```
+    /// # #[cfg(feature = "derive")]
+    /// # {
+    /// use problems::IntoReport;
     ///
-    /// ```rust
-    /// use problems::{Problem, ProblemDefinition, Report, StatusCode};
-    ///
-    /// #[derive(Debug, thiserror::Error)]
+    /// #[derive(Debug, thiserror::Error, problems::Problem)]
     /// #[error("private diagnostic")]
-    /// struct Conflict;
-    ///
-    /// impl Problem for Conflict {
-    ///     fn definition(&self) -> &'static ProblemDefinition {
-    ///         &ProblemDefinition {
-    ///             type_uri: "urn:example:conflict",
-    ///             title: "Conflict",
-    ///             status: StatusCode::CONFLICT,
-    ///         }
-    ///     }
-    ///
-    ///     fn definitions() -> impl Iterator<Item = &'static ProblemDefinition> {
-    ///         [ProblemDefinition {
-    ///             type_uri: "urn:example:conflict",
-    ///             title: "Conflict",
-    ///             status: StatusCode::CONFLICT,
-    ///         }].iter()
-    ///     }
+    /// #[problem(type_uri = "urn:example:retry", status = 429)]
+    /// struct Retry {
+    ///     #[problem(data)]
+    ///     seconds: u32,
     /// }
     ///
-    /// let details = Report::from(Conflict).details();
-    /// let body = serde_json::to_value(details)?;
-    /// assert_eq!(body["type"], "urn:example:conflict");
-    /// assert_eq!(body["status"], 409);
-    /// assert!(body.get("detail").is_none());
-    /// # Ok::<(), serde_json::Error>(())
+    /// let report = Retry { seconds: 30 }.into_report();
+    /// assert_eq!(report.as_details().data().unwrap().seconds, &30);
+    ///
+    /// let owned = report.into_details();
+    /// assert_eq!(owned.data().unwrap().seconds, 30);
+    /// # }
     /// ```
-    pub fn details(&self) -> ProblemDetails {
-        ProblemDetails::from(self)
+    pub fn as_details(&self) -> ProblemDetails<E::DataRef<'_>> {
+        let definition = self.problem.definition();
+        ProblemDetails {
+            type_uri: definition.type_uri,
+            title: definition.title,
+            status: definition.status,
+            detail: self.problem.detail(),
+            instance: self.instance.clone().or_else(|| self.problem.instance()),
+            data: self.problem.data(),
+        }
     }
 }
 
@@ -576,7 +624,7 @@ impl<E: Problem> IntoReport for E {}
 /****************************************/
 
 #[cfg(feature = "axum")]
-impl<E: Problem> IntoResponse for Report<E> {
+impl<E: Problem> axum::response::IntoResponse for Report<E> {
     /// Consumes the report and renders its declared public response.
     fn into_response(self) -> axum::response::Response {
         axum_response(self.problem().definition().status, self.into_details())
@@ -584,17 +632,20 @@ impl<E: Problem> IntoResponse for Report<E> {
 }
 
 #[cfg(feature = "axum")]
-impl<E: Problem> IntoResponse for &Report<E> {
+impl<E: Problem> axum::response::IntoResponse for &Report<E> {
     /// Renders an owned response while retaining the original error.
     fn into_response(self) -> axum::response::Response {
-        axum_response(self.problem().definition().status, self.details())
+        axum_response(self.problem().definition().status, self.as_details())
     }
 }
 
 #[cfg(feature = "axum")]
-fn axum_response(status: StatusCode, details: ProblemDetails) -> axum::response::Response {
-    let headers = [(CONTENT_TYPE, "application/problem+json")];
-    (status, headers, Json(details)).into_response()
+fn axum_response<D: serde::Serialize>(
+    status: StatusCode,
+    details: ProblemDetails<D>,
+) -> axum::response::Response {
+    let headers = [(axum::http::header::CONTENT_TYPE, "application/problem+json")];
+    axum::response::IntoResponse::into_response((status, headers, axum::Json(details)))
 }
 
 /****************************************/
@@ -621,7 +672,7 @@ impl<E: Problem> actix_web::ResponseError for Report<E> {
     fn error_response(&self) -> actix_web::HttpResponse {
         actix_web::HttpResponse::build(self.status_code())
             .content_type("application/problem+json")
-            .json(self.details())
+            .json(self.as_details())
     }
 }
 
@@ -641,13 +692,13 @@ impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for Report<E> {
 impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for &Report<E> {
     /// Builds a response whose body does not borrow the original report.
     fn respond_to(self, request: &'r rocket::Request<'_>) -> rocket::response::Result<'static> {
-        rocket_response(self.details(), request)
+        rocket_response(self.as_details(), request)
     }
 }
 
 #[cfg(feature = "rocket")]
-fn rocket_response(
-    details: ProblemDetails,
+fn rocket_response<D: serde::Serialize>(
+    details: ProblemDetails<D>,
     request: &rocket::Request<'_>,
 ) -> rocket::response::Result<'static> {
     use rocket::response::Responder;
@@ -670,7 +721,10 @@ fn rocket_response(
 /****************************************/
 
 #[cfg(feature = "poem")]
-impl<E: Problem + Send> poem::IntoResponse for Report<E> {
+impl<E: Problem + Send> poem::IntoResponse for Report<E>
+where
+    E::Data: Send,
+{
     /// Consumes the report and renders its declared public response.
     fn into_response(self) -> poem::Response {
         poem_response(self.problem().definition().status, self.into_details())
@@ -678,15 +732,21 @@ impl<E: Problem + Send> poem::IntoResponse for Report<E> {
 }
 
 #[cfg(feature = "poem")]
-impl<E: Problem + Sync> poem::IntoResponse for &Report<E> {
+impl<'a, E: Problem + Sync> poem::IntoResponse for &'a Report<E>
+where
+    E::DataRef<'a>: Send,
+{
     /// Renders an owned response without consuming the diagnostic error.
     fn into_response(self) -> poem::Response {
-        poem_response(self.problem().definition().status, self.details())
+        poem_response(self.problem().definition().status, self.as_details())
     }
 }
 
 #[cfg(feature = "poem")]
-fn poem_response(status: StatusCode, details: ProblemDetails) -> poem::Response {
+fn poem_response<D: serde::Serialize + Send>(
+    status: StatusCode,
+    details: ProblemDetails<D>,
+) -> poem::Response {
     use poem::IntoResponse;
     poem::IntoResponse::into_response(
         poem::web::Json(details)
@@ -696,7 +756,10 @@ fn poem_response(status: StatusCode, details: ProblemDetails) -> poem::Response 
 }
 
 #[cfg(feature = "poem")]
-impl<E: Problem + Send> From<Report<E>> for poem::Error {
+impl<E: Problem + Send> From<Report<E>> for poem::Error
+where
+    E::Data: Send,
+{
     /// Consumes the diagnostic error and retains only its public response.
     /// Inspect or report diagnostics before converting.
     fn from(report: Report<E>) -> Self {
@@ -705,12 +768,15 @@ impl<E: Problem + Send> From<Report<E>> for poem::Error {
 }
 
 #[cfg(feature = "poem")]
-impl<E: Problem + Sync> From<&Report<E>> for poem::Error {
+impl<'a, E: Problem + Sync> From<&'a Report<E>> for poem::Error
+where
+    E::DataRef<'a>: Send,
+{
     /// Retains only the public response in the Poem error; leaves the report available.
-    fn from(report: &Report<E>) -> Self {
+    fn from(report: &'a Report<E>) -> Self {
         Self::from_response(poem_response(
             report.problem().definition().status,
-            report.details(),
+            report.as_details(),
         ))
     }
 }
@@ -720,7 +786,10 @@ impl<E: Problem + Sync> From<&Report<E>> for poem::Error {
 /****************************************/
 
 #[cfg(feature = "salvo")]
-impl<E: Problem> salvo::Scribe for Report<E> {
+impl<E: Problem> salvo::Scribe for Report<E>
+where
+    E::Data: Send,
+{
     /// Consumes the report and writes its declared public response.
     fn render(self, response: &mut salvo::Response) {
         salvo_response(
@@ -732,15 +801,26 @@ impl<E: Problem> salvo::Scribe for Report<E> {
 }
 
 #[cfg(feature = "salvo")]
-impl<E: Problem> salvo::Scribe for &Report<E> {
+impl<'a, E: Problem> salvo::Scribe for &'a Report<E>
+where
+    E::DataRef<'a>: Send,
+{
     /// Writes public details while retaining the original report.
     fn render(self, response: &mut salvo::Response) {
-        salvo_response(self.problem().definition().status, self.details(), response);
+        salvo_response(
+            self.problem().definition().status,
+            self.as_details(),
+            response,
+        );
     }
 }
 
 #[cfg(feature = "salvo")]
-fn salvo_response(status: StatusCode, details: ProblemDetails, response: &mut salvo::Response) {
+fn salvo_response<D: serde::Serialize + Send>(
+    status: StatusCode,
+    details: ProblemDetails<D>,
+    response: &mut salvo::Response,
+) {
     // --- Render the public document using Salvo's JSON writer.
     response.status_code(status);
     salvo::Scribe::render(salvo::writing::Json(details), response);
@@ -767,12 +847,15 @@ impl<E: Problem + Send> warp::Reply for Report<E> {
 impl<E: Problem + Sync> warp::Reply for &Report<E> {
     /// Renders an owned response without cloning or consuming the original error.
     fn into_response(self) -> warp::reply::Response {
-        warp_response(self.problem().definition().status, self.details())
+        warp_response(self.problem().definition().status, self.as_details())
     }
 }
 
 #[cfg(feature = "warp")]
-fn warp_response(status: StatusCode, details: ProblemDetails) -> warp::reply::Response {
+fn warp_response<D: serde::Serialize>(
+    status: StatusCode,
+    details: ProblemDetails<D>,
+) -> warp::reply::Response {
     warp::Reply::into_response(warp::reply::with_header(
         warp::reply::with_status(warp::reply::json(&details), status),
         "content-type",
@@ -785,23 +868,29 @@ fn warp_response(status: StatusCode, details: ProblemDetails) -> warp::reply::Re
 /****************************************/
 
 #[cfg(feature = "aide")]
-impl<E: Problem> OperationOutput for Report<E> {
-    type Inner = ProblemDetails;
+impl<E: Problem> aide::OperationOutput for Report<E>
+where
+    E::Data: schemars::JsonSchema,
+{
+    type Inner = ProblemDetails<E::Data>;
 
     /// Describes the shared problem document schema and its JSON media type.
-    fn operation_response(ctx: &mut GenContext, _: &mut Operation) -> Option<Response> {
+    fn operation_response(
+        ctx: &mut aide::generate::GenContext,
+        _: &mut aide::openapi::Operation,
+    ) -> Option<aide::openapi::Response> {
         // --- Generate the shared document schema through Aide's schema context.
-        let schema = ctx.schema.subschema_for::<ProblemDetails>();
+        let schema = ctx.schema.subschema_for::<ProblemDetails<E::Data>>();
 
         // --- Describe the JSON media type using that schema for every problem response.
-        let mut response = Response {
+        let mut response = aide::openapi::Response {
             description: "RFC 9457 Problem Details".into(),
             ..Default::default()
         };
         response.content.insert(
             "application/problem+json".into(),
-            MediaType {
-                schema: Some(SchemaObject {
+            aide::openapi::MediaType {
+                schema: Some(aide::openapi::SchemaObject {
                     json_schema: schema,
                     external_docs: None,
                     example: None,
@@ -814,11 +903,11 @@ impl<E: Problem> OperationOutput for Report<E> {
 
     /// Groups declared problem types by status without constructing errors.
     fn inferred_responses(
-        ctx: &mut GenContext,
-        operation: &mut Operation,
-    ) -> Vec<(Option<u16>, Response)> {
+        ctx: &mut aide::generate::GenContext,
+        operation: &mut aide::openapi::Operation,
+    ) -> Vec<(Option<u16>, aide::openapi::Response)> {
         // --- Collect problem titles and identities by status, in ascending status order.
-        let mut descriptions = BTreeMap::<u16, Vec<String>>::new();
+        let mut descriptions = std::collections::BTreeMap::<u16, Vec<String>>::new();
         for definition in E::definitions() {
             descriptions
                 .entry(definition.status.as_u16())
@@ -840,7 +929,7 @@ impl<E: Problem> OperationOutput for Report<E> {
             .map(|(status, descriptions)| {
                 (
                     Some(status),
-                    Response {
+                    aide::openapi::Response {
                         description: descriptions.join("\n\n"),
                         ..response.clone()
                     },

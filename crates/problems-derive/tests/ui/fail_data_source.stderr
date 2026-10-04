@@ -1,0 +1,5 @@
+error: diagnostic sources cannot be exposed as public data
+ --> tests/ui/fail_data_source.rs:4:18
+  |
+4 | struct Failure { #[problem(data)] source: std::io::Error }
+  |                  ^

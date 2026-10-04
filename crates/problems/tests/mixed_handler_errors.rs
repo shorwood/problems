@@ -161,15 +161,16 @@ fn typed_handler_declares_all_error_statuses() {
     }
     let api = serde_json::to_value(&api).unwrap();
     let schemas = api["components"]["schemas"].as_object().unwrap();
-    assert_eq!(schemas.len(), 1);
-    let schema = &schemas["ProblemDetails"];
+    let reference = api["paths"]["/typed/{case}"]["get"]["responses"]["401"]["content"]["application/problem+json"]["schema"]["$ref"].as_str().unwrap();
+    let name = reference.strip_prefix("#/components/schemas/").unwrap();
+    let schema = &schemas[name];
     assert_eq!(schema["properties"]["status"]["minimum"], 100);
     assert_eq!(schema["properties"]["status"]["maximum"], 999);
     for status in ["401", "404", "503"] {
         assert_eq!(
             api["paths"]["/typed/{case}"]["get"]["responses"][status]["content"]["application/problem+json"]
                 ["schema"]["$ref"],
-            "#/components/schemas/ProblemDetails"
+            reference
         );
     }
 }

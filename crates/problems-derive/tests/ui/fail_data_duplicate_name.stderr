@@ -1,0 +1,5 @@
+error: duplicate public data name
+ --> tests/ui/fail_data_duplicate_name.rs:4:69
+  |
+4 | struct Failure { #[problem(data = "x")] first: u8, #[problem(data = "x")] second: u8 }
+  |                                                                     ^^^

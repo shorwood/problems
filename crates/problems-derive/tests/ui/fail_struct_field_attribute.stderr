@@ -1,5 +1,5 @@
-error: problem attributes belong on the struct, not fields
- --> tests/ui/fail_struct_field_attribute.rs:4:23
+error: only data is supported on problem fields
+ --> tests/ui/fail_struct_field_attribute.rs:4:33
   |
 4 | struct InvalidInput { #[problem(status = 409)] value: String }
-  |                       ^
+  |                                 ^^^^^^

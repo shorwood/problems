@@ -49,7 +49,7 @@ let report = CreateFlowProblem::NameConflict {
 .into_report();
 
 assert_eq!(report.problem().definition().status, 409);
-let body = serde_json::to_value(report.details())?;
+let body = serde_json::to_value(report.as_details())?;
 assert!(body.get("name").is_none());
 assert_eq!(body["detail"], "A flow named 'monthly-report' already exists.");
 assert!(body.get("source").is_none());
@@ -132,7 +132,7 @@ let report = error.into_report();
 assert!(report.problem().source().is_some());
 assert_eq!(AppProblem::STORAGE.status, 500);
 assert_eq!(report.problem().definition(), &AppProblem::STORAGE);
-assert_eq!(report.details().detail(), Some("Unable to save the resource."));
+assert_eq!(report.as_details().detail(), Some("Unable to save the resource."));
 ```
 
 Public tuple fields can use explicit indexes, while source fields stay diagnostic:
@@ -181,12 +181,92 @@ Structs expose `DEFINITION` rather than a variant constant. Enum prefixes and
 `#[problem(transparent)]` forwarding remain enum features.
 
 `Report::from(error)` and `error.into_report()` retain the same typed error.
-`ProblemDetails::from(&report)` and `Report::details` construct an owned
-public document without reporting the error. Definitions use `StatusCode`, so
+`Report::as_details` borrows the public payload; `Report::into_details` moves it
+into a document. Neither operation reports the error. Definitions use
+`StatusCode`, so
 conversion is infallible. The derive accepts only integer status literals from 100 through 999, such as `status = 409`. Constant paths and other expressions are rejected.
 `ProblemDetails::status()` returns `StatusCode`, preserving status comparisons
 and predicates while serialization keeps the JSON member numeric.
 Omitting `status` defaults to `StatusCode::INTERNAL_SERVER_ERROR` (500). The document remains usable after dropping the report.
+
+Select structured public values explicitly with field attributes:
+
+```rust
+use problems::{ProblemDocument, IntoReport};
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum RetryProblem {
+    #[error("retry after {seconds} seconds")]
+    #[problem(status = 429, detail = "Try again in {seconds} seconds.")]
+    Retry {
+        #[problem(data)]
+        seconds: u32,
+        #[problem(data = "request")]
+        request_id: String,
+        source: std::io::Error,
+    },
+}
+
+let report = RetryProblem::Retry {
+    seconds: 30,
+    request_id: "abc".into(),
+    source: std::io::Error::other("private"),
+}.into_report();
+
+let body = serde_json::to_value(report.as_details())?;
+assert_eq!(body["data"], serde_json::json!({"seconds": 30, "request": "abc"}));
+
+let received: ProblemDocument<RetryProblemData<u32, String>> =
+    serde_json::from_value(body)?;
+assert!(received.is_type(&RetryProblem::RETRY));
+let RetryProblemData::Retry { seconds, request_id } = received.data().unwrap();
+assert_eq!(*seconds, 30);
+assert_eq!(request_id, "abc");
+assert!(received.matches(&report.into_details()));
+# Ok::<(), serde_json::Error>(())
+```
+
+Named fields use their Rust names unless renamed. Tuple fields require an
+explicit key, such as `#[problem(data = "seconds")]`. Structs use the same
+attributes. Detail interpolation does not select a field for data. Diagnostic
+sources cannot be selected. Problems without selected fields omit `data`;
+selected `Option` fields serialize `None` as a value of `null` inside the object.
+
+The derive generates a public `<Type>Data` container with generic parameters
+for selected fields, in declaration order. Enum payloads are untagged objects;
+transparent variants delegate the wrapped payload without adding wire tags.
+Typed deserialization uses Serde's untagged matching rules, so overlapping
+variant shapes can be ambiguous. Type URI remains the problem identifier.
+
+Choose projection according to ownership:
+
+- `as_details()` borrows selected fields and requires no cloning.
+- `into_details()` moves selected fields and requires no cloning.
+
+Borrowed documents cannot outlive their reports. Moving a reference-valued field
+preserves its lifetime; it does not make the referenced value owned.
+Detail rendering and an attached instance still allocate owned strings.
+HTTP adapters immediately serialize to owned response bodies. Poem and Salvo require public projections
+to implement `Send`, matching their JSON response contracts.
+
+`ProblemDetails<D = ()>` exposes its typed payload through `data()`.
+`ProblemDocument<D = ()>` decodes received data directly into the chosen
+payload type. Use `ProblemDocument<serde_json::Value>` to retain arbitrary JSON.
+Missing or null data returns `None`; present data must deserialize as `D`.
+Document equality includes data and instance. `matches(&details)` compares with
+typed producer details and ignores instance. `is_type()` compares the URI.
+
+Manual `Problem` implementations declare `type Data = ()` and
+`type DataRef<'a> = () where Self: 'a` when no payload is supplied.
+For custom payloads, implement `data()` and `into_data()`.
+These associated types are a breaking change for manual implementations.
+
+With `schemars`, generated payloads receive conditional schema implementations.
+Aide documents `ProblemDetails<E::Data>` for every declared response status,
+sharing the payload union rather than correlating a particular URI with a
+particular data shape. Serialization and schema bounds apply to public fields,
+not sources.
 
 Attach an occurrence URI at the HTTP boundary without adding request context
 to the original error:
@@ -383,16 +463,16 @@ for (error, expected_type, instance) in [
 The [`instance` member](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.5)
 can identify an occurrence without locating a resource; relative instances have
 the same base-resolution requirement. Applications own that resolution and any
-decision to retrieve documentation. `GenericProblem::is_type`, `matches`, and
+decision to retrieve documentation. `ProblemDocument::is_type`, `matches`, and
 document equality compare stored strings; they do not resolve URI references.
 
 
 ## Receiving problem documents
 
-Use `GenericProblem` to decode owned public data from an HTTP response:
+Use `ProblemDocument` to decode owned public data from an HTTP response:
 
 ```rust
-use problems::{GenericProblem, StatusCode};
+use problems::{ProblemDocument, StatusCode};
 
 let problem = {
     let body = String::from(r#"{
@@ -403,7 +483,7 @@ let problem = {
         "instance": "/occurrences/123",
         "extension": {"ignored": true}
     }"#);
-    serde_json::from_str::<GenericProblem>(&body)?
+    serde_json::from_str::<ProblemDocument>(&body)?
 };
 
 assert_eq!(problem.type_uri(), "urn:example:name-conflict");
@@ -414,11 +494,56 @@ assert_eq!(problem.instance(), Some("/occurrences/123"));
 # Ok::<(), serde_json::Error>(())
 ```
 
+For a known payload, choose its type once and use it with either decoder:
+
+```rust
+use problems::{IntoReport, ProblemDocument};
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[error("retry after {seconds} seconds")]
+#[problem(type_uri = "urn:example:retry", title = "Retry", status = 429)]
+struct Retry {
+    #[problem(data)]
+    seconds: u32,
+    #[problem(data)]
+    request: String,
+}
+
+let expected = Retry { seconds: 30, request: "abc".into() }
+    .into_report()
+    .into_details();
+type Received = ProblemDocument<RetryData<u32, String>>;
+
+let from_json: Received = serde_json::from_str(r#"{
+    "type": "urn:example:retry", "title": "Retry", "status": 429,
+    "data": {"seconds": 30, "request": "abc"}
+}"#)?;
+let from_xml: Received = serde_xml_rs::from_str(r#"
+    <problem xmlns="urn:ietf:rfc:7807">
+      <type>urn:example:retry</type>
+      <title>Retry</title>
+      <status>429</status>
+      <data><seconds>30</seconds><request>abc</request></data>
+    </problem>
+"#)?;
+
+assert!(from_json.matches(&expected));
+assert!(from_xml.matches(&expected));
+assert_eq!(from_json, from_xml);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Applications select their decoders; XML support adds no runtime dependency to
+`problems`. This example uses a struct payload. XML mappings for sequences and
+enums depend on the decoder; the derive's untagged enum payloads require a
+decoder that supports Serde's untagged representation. For arbitrary JSON, use
+`ProblemDocument<serde_json::Value>`.
+
 Compare a received type with a variant's definition without constructing its
 fields or diagnostic source:
 
 ```rust
-use problems::GenericProblem;
+use problems::ProblemDocument;
 
 #[derive(Debug, thiserror::Error, problems::Problem)]
 #[problem(prefix = "urn:example")]
@@ -428,7 +553,7 @@ enum CreateProblem {
     NameConflict { source: std::io::Error },
 }
 
-let received: GenericProblem = serde_json::from_str(
+let received: ProblemDocument = serde_json::from_str(
     r#"{"type":"urn:example:name-conflict"}"#,
 )?;
 assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
@@ -439,15 +564,18 @@ assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
 private diagnostics do not affect this identity check. Relative received URI
 references require resolution before comparing them with declared identities.
 
-Both document types implement `PartialEq` and `Eq`. Equality compares all five
-public members, including `instance`, and works between `GenericProblem` and
-`ProblemDetails` in either direction. For repeated failures, use
-`received.matches(&report.details())`: it compares type, title, status, and detail
-while ignoring only `instance`. Missing members are not wildcards; an omitted
-detail differs from an empty string. `is_type()` remains the identity-only check.
+Both document types implement `PartialEq` and `Eq` when their payloads support
+those traits. Compare a received document directly with typed producer details:
+`received.matches(&report.into_details())`.
+Equality between `ProblemDocument`s compares all public members, including
+`instance`; convert details with `ProblemDocument::from(details)` for full equality.
+For repeated failures, `matches(&details)` compares
+type, title, status, detail, and data while ignoring only `instance`.
+Missing members are not wildcards; an omitted detail differs from an empty
+string. `is_type()` remains the identity-only check.
 
-The document owns its strings and remains usable after dropping the response
-buffer. Missing `type` defaults to `about:blank`; other missing members return
+The metadata owns its strings; a borrowed payload can still depend on the
+response buffer. Missing `type` defaults to `about:blank`; other missing members return
 `None`. Unknown extensions are discarded. Decoding uses ordinary Serde type
 checks: wrongly typed members fail decoding. This intentionally does not implement
 [RFC 9457's tolerant member-processing rule](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1).
@@ -455,8 +583,12 @@ Status is decoded as an optional `StatusCode`; invalid values fail decoding. Rel
 URI references remain unresolved; the application must use the response's base
 URI when interpreting them.
 
-`GenericProblem::from(report.into_details())` also converts a local public
-document: it owns the static type and title and moves detail and instance.
+`ProblemDocument::from(report.into_details())` converts a local public document:
+it owns the static type and title and moves detail, instance, and the typed payload.
+Conversion is infallible and requires neither serialization nor cloning.
+Converting `as_details()` preserves any references in its borrowed payload;
+the resulting document cannot outlive those references. Comparisons perform no
+serialization.
 This receiving type carries public data only. It has no `Problem`, `Error`,
 framework response, or Aide operation implementation, and cannot recover the
 original diagnostic error or its static definitions. Keep `Report<E>` in server
@@ -481,7 +613,7 @@ support is unconditional; the core does not depend on a JSON, YAML, or XML encod
 | `schemars` | `JsonSchema` for producer and receiving documents |
 | `aide` | Declared status documentation; enables `axum` and `schemars` |
 
-Enable `schemars` to generate schemas for `ProblemDetails` and `GenericProblem`
+Enable `schemars` to generate schemas for `ProblemDetails` and `ProblemDocument`
 without an HTTP framework. Producer schemas require type, title, and status;
 receiving schemas reflect missing members and the `about:blank` default.
 `Report<E>` uses its projected document through Aide; declaration metadata and
@@ -497,7 +629,7 @@ actual output, not a promise that reports emit null.
 | --- | --- | --- |
 | Producer JSON | Member omitted | String |
 | Current producer schema | Member optional | String or null |
-| `GenericProblem` decoding | `None` | String becomes `Some`; null becomes `None` |
+| `ProblemDocument` decoding | `None` | String becomes `Some`; null becomes `None` |
 
 Wrongly typed receiving members still fail decoding. Schemars 0.9.0 retains the
 nullable member types even when generating a serialization-contract schema.
@@ -505,7 +637,7 @@ The report adapter uses Aide's existing schema context and does not change its
 global settings. Any narrowing of the published producer schema is a separate
 compatibility decision.
 
-Pass `report.details()` to the serializer you choose, such as a YAML encoder.
+Pass `report.as_details()` to the serializer you choose, such as a YAML encoder.
 The built-in HTTP integrations emit JSON. RFC XML mapping is outside this library.
 
 ## HTTP and documentation
@@ -546,7 +678,7 @@ fn direct_handler(path: &Path) -> Result<Vec<u8>, Report<AppProblem>> {
 # // Reading a directory exercises a real I/O failure without creating a file.
 # for report in [handler(Path::new(".")).unwrap_err(), direct_handler(Path::new(".")).unwrap_err()] {
 #     assert!(std::error::Error::source(report.problem()).is_some());
-#     let body = serde_json::to_value(report.details()).unwrap();
+#     let body = serde_json::to_value(report.as_details()).unwrap();
 #     assert_eq!(body, serde_json::json!({
 #         "type": "urn:example:read-failed",
 #         "title": "Internal server error",
@@ -681,7 +813,7 @@ the Actix adapter converts it numerically to Actix's `http` 0.2 status type.
 
 Aide's `OperationOutput` implementation for `Report<E>` reads the static
 declarations. It groups variants by status and lists each title and identity in
-the response description. All entries reference one `ProblemDetails` schema;
+the response description. All entries reference one `ProblemDetails<E::Data>` schema;
 only the standard members are supported. No global registry or per-variant
 schemas are required.
 
@@ -866,11 +998,12 @@ let borrowed: &dyn Problem = report.problem();
 assert_eq!(borrowed.definition(), &StorageFailure::DEFINITION);
 assert_eq!(borrowed.detail().as_deref(), Some("Unable to save the resource."));
 
-// Project public metadata before erasing the diagnostic error's type.
-let document = report.details();
+// Own the public document before erasing the diagnostic error's type.
+let document = problems::ProblemDocument::from(report.as_details());
 let diagnostic: Box<dyn Error + Send + Sync> = Box::new(report.into_problem());
 assert!(diagnostic.source().unwrap().is::<std::io::Error>());
-assert_eq!(document.status(), 503);
+assert_eq!(document.status(), Some(problems::StatusCode::SERVICE_UNAVAILABLE));
+# Ok::<(), serde_json::Error>(())
 ```
 
 `definition()` describes one error value. `definitions()` describes every public
@@ -892,7 +1025,7 @@ inspection before erasure, or downcast to a known error type afterward.
 
 `into_problem()` discards attached report context; keep the projected document
 when that context matters. The document is public data and does not retain the
-original error. `GenericProblem` likewise carries public document data; it does
+original error. `ProblemDocument` likewise carries public document data; it does
 not implement `Problem`, framework response traits, or Aide operation traits.
 Supporting heterogeneous erased handler errors would need a separate explicit
 registry and response contract. The aggregate enum above supplies the complete
@@ -1022,19 +1155,22 @@ assert_eq!(report.problem().to_string(), "storage operation failed");
 assert!(report.problem().source().is_some());
 assert_eq!(report.problem().code().unwrap().to_string(), "app::storage");
 
-// Keep the public document before moving the original error into Miette.
-let document = report.details();
+// Own the public document before moving the original error into Miette.
+let document = problems::ProblemDocument::from(report.as_details());
 let diagnostic = miette::Report::new(report.into_problem());
 assert!(diagnostic.downcast_ref::<StorageFailure>().is_some());
 assert!(diagnostic.chain().any(|cause| cause.is::<std::io::Error>()));
 assert_eq!(document.detail(), Some("Unable to save the resource."));
 assert_eq!(document.instance(), Some("urn:request:42"));
+# Ok::<(), serde_json::Error>(())
 ```
 
 `problem()` borrows the original error. `into_problem()` consumes the HTTP report,
 moves out that error, and discards attached report context such as `instance`.
-Project with `details()` first when you need both the public document and an owned
-diagnostic report. This requires no `Clone` implementation. Miette's
+These examples have no public payload, so
+`ProblemDocument::from(report.as_details())` owns the public document before the
+original error is moved. For borrowed payloads, serialize before moving the error
+if an independent wire document is needed. Miette's
 [`Report::new`](https://docs.rs/miette/latest/miette/struct.Report.html#method.new)
 requires the original error to implement `Diagnostic + Send + Sync + 'static`.
 The HTTP wrapper implements neither `std::error::Error` nor `miette::Diagnostic`;

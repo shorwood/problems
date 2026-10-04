@@ -8,6 +8,6 @@ enum Failure<T> {
 }
 fn main() {
     let report = Failure::Conflict(std::io::Error::other("private source"), 42).into_report();
-    assert_eq!(report.details().status(), issues::StatusCode::CONFLICT);
-    assert!(report.details().detail().is_none());
+    assert_eq!(report.as_details().status(), issues::StatusCode::CONFLICT);
+    assert!(report.as_details().detail().is_none());
 }

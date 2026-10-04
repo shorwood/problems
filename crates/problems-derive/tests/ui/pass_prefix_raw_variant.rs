@@ -7,6 +7,6 @@ enum Failure {
     r#type,
 }
 fn main() {
-    let body = serde_json::to_value(Failure::r#type.into_report().details()).unwrap();
+    let body = serde_json::to_value(Failure::r#type.into_report().as_details()).unwrap();
     assert_eq!(body["type"], "urn:test:type");
 }

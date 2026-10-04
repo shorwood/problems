@@ -3,6 +3,7 @@
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
 
+mod data;
 mod declaration;
 mod detail;
 mod expand;
@@ -30,6 +31,10 @@ mod runtime_path;
 /// Optional `detail` supports named fields or explicit tuple indexes with literal width
 /// and precision; dynamic formatting
 /// parameters are unsupported. Other fields remain diagnostic.
+/// Select named public fields with `#[problem(data)]`; use
+/// `#[problem(data = "name")]` to rename or select tuple fields.
+/// Sources cannot be selected. Generated `<Type>Data` containers support
+/// borrowing and moving without requiring selected fields to implement `Clone`.
 #[proc_macro_derive(Problem, attributes(problem))]
 pub fn derive_problem(input: TokenStream) -> TokenStream {
     expand::expand(parse_macro_input!(input as DeriveInput))

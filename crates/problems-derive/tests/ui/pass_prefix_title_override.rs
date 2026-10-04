@@ -7,7 +7,7 @@ enum Failure {
     NameConflict,
 }
 fn main() {
-    let body = serde_json::to_value(Failure::NameConflict.into_report().details()).unwrap();
+    let body = serde_json::to_value(Failure::NameConflict.into_report().as_details()).unwrap();
     assert_eq!(body["type"], "urn:test:name-conflict");
     assert_eq!(body["title"], "Custom conflict title");
 }

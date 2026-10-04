@@ -13,6 +13,12 @@ static DEFINITION: ProblemDefinition = ProblemDefinition {
 };
 
 impl Problem for Failure {
+    type Data = ();
+
+    type DataRef<'data>
+        = ()
+    where
+        Self: 'data;
     fn definition(&self) -> &'static ProblemDefinition {
         &DEFINITION
     }
@@ -52,7 +58,7 @@ fn projection_preserves_fallback_and_override() {
         if let Some(value) = override_value {
             report = report.with_instance(value);
         }
-        let borrowed = serde_json::to_value(report.details()).unwrap();
+        let borrowed = serde_json::to_value(report.as_details()).unwrap();
         let owned = serde_json::to_value(report.into_details()).unwrap();
         assert_eq!(borrowed, owned);
         assert_eq!(owned.get("instance").and_then(|v| v.as_str()), expected);

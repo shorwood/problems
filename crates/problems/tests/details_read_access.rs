@@ -13,6 +13,12 @@ static DEFINITION: ProblemDefinition = ProblemDefinition {
 };
 
 impl Problem for Failure {
+    type Data = ();
+
+    type DataRef<'data>
+        = ()
+    where
+        Self: 'data;
     fn definition(&self) -> &'static ProblemDefinition {
         &DEFINITION
     }
@@ -69,6 +75,12 @@ fn typed_status_preserves_custom_numeric_projection() {
     };
 
     impl Problem for Custom {
+        type Data = ();
+
+        type DataRef<'data>
+            = ()
+        where
+            Self: 'data;
         fn definition(&self) -> &'static ProblemDefinition {
             &CUSTOM
         }
@@ -83,7 +95,7 @@ fn typed_status_preserves_custom_numeric_projection() {
     assert!(document.status().is_client_error());
     assert_eq!(serde_json::to_value(&document).unwrap()["status"], 499);
     assert_eq!(
-        problems::GenericProblem::from(document).status(),
+        problems::ProblemDocument::from(document).status(),
         Some(CUSTOM.status)
     );
 }

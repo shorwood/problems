@@ -1,4 +1,4 @@
-use problems::{GenericProblem, Problem, ProblemDefinition, Report, StatusCode};
+use problems::{Problem, ProblemDefinition, ProblemDocument, Report, StatusCode};
 
 #[test]
 fn received_document_owns_all_members() {
@@ -6,7 +6,7 @@ fn received_document_owns_all_members() {
         let buffer = String::from(
             r#"{"type":"urn:test:conflict","title":"Conflict","status":409,"detail":"Choose another name.","instance":"/occurrences/123"}"#,
         );
-        serde_json::from_str::<GenericProblem>(&buffer).unwrap()
+        serde_json::from_str::<ProblemDocument>(&buffer).unwrap()
     };
     assert_eq!(document.type_uri(), "urn:test:conflict");
     assert_eq!(document.title(), Some("Conflict"));
@@ -17,19 +17,20 @@ fn received_document_owns_all_members() {
 
 #[test]
 fn omitted_members_have_receiving_defaults() {
-    let document: GenericProblem = serde_json::from_str("{}").unwrap();
+    let document: ProblemDocument = serde_json::from_str("{}").unwrap();
     assert_eq!(document.type_uri(), "about:blank");
     assert_eq!(document.title(), None);
     assert_eq!(document.status(), None);
     assert_eq!(document.detail(), None);
     assert_eq!(document.instance(), None);
+    assert_eq!(document.data(), None);
     for field in ["type", "title", "status", "detail", "instance"] {
         let mut value = serde_json::json!({
             "type": "urn:test:conflict", "title": "Conflict", "status": 409,
             "detail": "Public explanation", "instance": "urn:test:occurrence"
         });
         value.as_object_mut().unwrap().remove(field);
-        let document: GenericProblem = serde_json::from_value(value).unwrap();
+        let document: ProblemDocument = serde_json::from_value(value).unwrap();
         match field {
             "type" => assert_eq!(document.type_uri(), "about:blank"),
             "title" => assert_eq!(document.title(), None),
@@ -42,6 +43,23 @@ fn omitted_members_have_receiving_defaults() {
 }
 
 #[test]
+fn received_data_preserves_arbitrary_json() {
+    for data in [
+        serde_json::json!({"nested": [1, {"enabled": true, "optional": null}]}),
+        serde_json::json!([1, "two", false]),
+        serde_json::json!("message"),
+        serde_json::json!(42),
+        serde_json::json!(true),
+    ] {
+        let document: ProblemDocument<serde_json::Value> =
+            serde_json::from_value(serde_json::json!({"data": data})).unwrap();
+        assert_eq!(document.data(), Some(&data));
+    }
+    let document: ProblemDocument = serde_json::from_str(r#"{"data":null}"#).unwrap();
+    assert_eq!(document.data(), None);
+}
+
+#[test]
 fn wrongly_typed_members_fail_decoding() {
     for input in [
         r#"{"type":123}"#,
@@ -50,13 +68,13 @@ fn wrongly_typed_members_fail_decoding() {
         r#"{"detail":[]}"#,
         r#"{"instance":{}}"#,
     ] {
-        assert!(serde_json::from_str::<GenericProblem>(input).is_err());
+        assert!(serde_json::from_str::<ProblemDocument>(input).is_err());
     }
 }
 
 #[test]
 fn unknown_extensions_do_not_hide_standard_members() {
-    let document: GenericProblem = serde_json::from_str(
+    let document: ProblemDocument = serde_json::from_str(
         r#"{"extension":{"nested":[1,{"x":true}]},"status":499,"title":"Custom"}"#,
     )
     .unwrap();
@@ -67,7 +85,7 @@ fn unknown_extensions_do_not_hide_standard_members() {
 #[test]
 fn unsupported_status_fails_decoding() {
     for input in [r#"{"status":99}"#, r#"{"status":1000}"#] {
-        assert!(serde_json::from_str::<GenericProblem>(input).is_err());
+        assert!(serde_json::from_str::<ProblemDocument>(input).is_err());
     }
 }
 
@@ -76,6 +94,12 @@ fn unsupported_status_fails_decoding() {
 struct Failure(Option<String>);
 
 impl Problem for Failure {
+    type Data = ();
+
+    type DataRef<'data>
+        = ()
+    where
+        Self: 'data;
     fn definition(&self) -> &'static ProblemDefinition {
         &ProblemDefinition {
             type_uri: "urn:test:failure",
@@ -95,7 +119,7 @@ impl Problem for Failure {
 
 #[test]
 fn producer_conversion_preserves_metadata_and_optional_omission() {
-    let document = GenericProblem::from(Report::new(Failure(None)).into_details());
+    let document = ProblemDocument::from(Report::new(Failure(None)).into_details());
     assert_eq!(document.type_uri(), "urn:test:failure");
     assert_eq!(document.title(), Some("Failure"));
     assert_eq!(document.status(), Some(StatusCode::CONFLICT));
@@ -107,7 +131,7 @@ fn producer_conversion_preserves_metadata_and_optional_omission() {
 fn producer_conversion_moves_report_instance() {
     let instance = String::from("urn:test:occurrence");
     let allocation = instance.as_ptr();
-    let document = GenericProblem::from(
+    let document = ProblemDocument::from(
         Report::new(Failure(None))
             .with_instance(instance)
             .into_details(),
@@ -120,7 +144,7 @@ fn producer_conversion_moves_report_instance() {
 fn producer_conversion_moves_present_detail() {
     let details = Report::new(Failure(Some("Public explanation".into()))).into_details();
     let allocation = details.detail().unwrap().as_ptr();
-    let document = GenericProblem::from(details);
+    let document = ProblemDocument::from(details);
     assert_eq!(document.detail(), Some("Public explanation"));
     assert_eq!(document.detail().unwrap().as_ptr(), allocation);
 }
@@ -139,7 +163,7 @@ fn matches_variant_definition_without_constructing_error() {
         #[problem(404)]
         Missing,
     }
-    let document: GenericProblem = serde_json::from_str(
+    let document: ProblemDocument = serde_json::from_str(
         r#"{"type":"urn:test:name-conflict","title":"Other title","status":500,"instance":"urn:test:occurrence"}"#,
     ).unwrap();
     assert!(document.is_type(&Local::NAME_CONFLICT));
@@ -149,9 +173,9 @@ fn matches_variant_definition_without_constructing_error() {
 #[cfg(feature = "schemars")]
 #[test]
 fn receiving_schema_preserves_defaults_and_optional_members() {
-    let schema = serde_json::to_value(schemars::schema_for!(GenericProblem)).unwrap();
+    let schema = serde_json::to_value(schemars::schema_for!(ProblemDocument)).unwrap();
     let properties = schema["properties"].as_object().unwrap();
-    assert_eq!(properties.len(), 5);
+    assert_eq!(properties.len(), 6);
     assert_eq!(properties["type"]["type"], "string");
     assert_eq!(properties["type"]["default"], "about:blank");
     assert!(
