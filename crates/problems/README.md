@@ -487,6 +487,24 @@ receiving schemas reflect missing members and the `about:blank` default.
 `Report<E>` uses its projected document through Aide; declaration metadata and
 private diagnostic errors are not response schemas.
 
+Optionality and nullability describe different things. `ProblemDetails` omits
+`detail` and `instance` when absent; when present, it emits strings. The current
+Schemars schema, including Aide's shared component, permits either strings or
+`null` for these optional members. This is a broader schema than the producer's
+actual output, not a promise that reports emit null.
+
+| Contract | Absent `detail` / `instance` | Present value |
+| --- | --- | --- |
+| Producer JSON | Member omitted | String |
+| Current producer schema | Member optional | String or null |
+| `GenericProblem` decoding | `None` | String becomes `Some`; null becomes `None` |
+
+Wrongly typed receiving members still fail decoding. Schemars 0.9.0 retains the
+nullable member types even when generating a serialization-contract schema.
+The report adapter uses Aide's existing schema context and does not change its
+global settings. Any narrowing of the published producer schema is a separate
+compatibility decision.
+
 Pass `report.details()` to the serializer you choose, such as a YAML encoder.
 The built-in HTTP integrations emit JSON. RFC XML mapping is outside this library.
 
