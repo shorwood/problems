@@ -160,3 +160,37 @@ fn typed_handler_declares_all_error_statuses() {
         assert!(responses.contains_key(&aide::openapi::StatusCode::Code(status)));
     }
 }
+
+#[cfg(feature = "aide")]
+#[test]
+fn struct_handler_declares_one_problem_response() {
+    #[derive(Debug, thiserror::Error, problems::Problem)]
+    #[error("name conflict")]
+    #[problem(type_uri = "urn:test:name-conflict", status = 409)]
+    struct NameConflict;
+
+    async fn handler() -> Result<(), Report<NameConflict>> {
+        Err(NameConflict.into_report())
+    }
+
+    let mut api = aide::openapi::OpenApi::default();
+    let _router = aide::axum::ApiRouter::<()>::new()
+        .api_route("/struct", aide::axum::routing::get(handler))
+        .finish_api(&mut api);
+    let operation = api.paths.as_ref().unwrap().paths["/struct"]
+        .as_item()
+        .unwrap()
+        .get
+        .as_ref()
+        .unwrap();
+    let responses = &operation.responses.as_ref().unwrap().responses;
+    let errors: Vec<_> = responses
+        .keys()
+        .filter(|status| matches!(status, aide::openapi::StatusCode::Code(400..=599)))
+        .collect();
+    assert_eq!(errors, vec![&aide::openapi::StatusCode::Code(409)]);
+    let response = responses[&aide::openapi::StatusCode::Code(409)]
+        .as_item()
+        .unwrap();
+    assert!(response.content.contains_key("application/problem+json"));
+}

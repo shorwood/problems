@@ -1,0 +1,5 @@
+error: transparent problem forwarding is supported only on enum variants
+ --> tests/ui/fail_struct_transparent.rs:2:1
+  |
+2 | #[error(transparent)]
+  | ^

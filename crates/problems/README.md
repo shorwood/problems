@@ -155,6 +155,31 @@ assert_eq!(error.detail().as_deref(), Some("Unable to save document."));
 These variants declare their own public identity. `#[problem(transparent)]`
 instead forwards the wrapped problem's metadata and occurrence data.
 
+A struct represents a single problem without an enum wrapper. Put metadata on
+its type and supply an explicit `type_uri`. Unit, named, and tuple structs use
+the same detail formatting and source protection rules as enum variants.
+
+```rust
+use problems::Problem;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[error("name already taken: {name}")]
+#[problem(type_uri = "urn:example:name-conflict", status = 409,
+          detail = "The name {name} is unavailable.")]
+struct NameConflict {
+    name: String,
+}
+
+let error = NameConflict { name: "alice".into() };
+assert_eq!(NameConflict::DEFINITION.title, "Name Conflict");
+assert_eq!(error.definition(), &NameConflict::DEFINITION);
+assert_eq!(NameConflict::definitions().count(), 1);
+assert_eq!(error.detail().as_deref(), Some("The name alice is unavailable."));
+```
+
+Structs expose `DEFINITION` rather than a variant constant. Enum prefixes and
+`#[problem(transparent)]` forwarding remain enum features.
+
 `Report::from(error)` and `error.into_report()` retain the same typed error.
 `ProblemDetails::from(&report)` and `Report::details` construct an owned
 public document without reporting the error. Definitions use `StatusCode`, so

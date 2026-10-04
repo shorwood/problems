@@ -55,7 +55,9 @@ pub struct ProblemDefinition {
 /// Only the definition, detail, and instance enter the public document.
 ///
 /// Implement this trait directly, or use `#[derive(Problem)]` with the `derive`
-/// feature, enabled by default. Unit, named-field, and tuple variants are accepted.
+/// feature, enabled by default. Unit, named-field, and tuple variants or structs
+/// are accepted. Struct metadata goes on the type, requires `type_uri`, and
+/// exposes `DEFINITION`; `definitions()` yields that single definition.
 /// Tuple detail uses explicit indexes such as `{0}`; diagnostic sources cannot
 /// be interpolated.
 /// The derive implements `definition()` and

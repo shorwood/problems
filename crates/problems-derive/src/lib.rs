@@ -9,9 +9,13 @@ mod expand;
 mod fields;
 mod runtime_path;
 
-/// Declare public problems on enum variants.
+/// Declare public problems on enum variants or a single struct.
 ///
-/// Titles default to the variant name converted to Title Case by `heck`.
+/// Struct declarations require an explicit `type_uri` and expose `DEFINITION`.
+/// Unit, named-field, and tuple structs follow the same formatting and source
+/// protection rules as enum variants.
+///
+/// Titles default to the variant or struct name converted to Title Case by `heck`.
 /// An explicit `title` must be a nonempty string literal. Braces in titles
 /// are literal text, including `{name}`; interpolation belongs in `detail`.
 /// An enum's `#[problem(prefix = "...")]`
@@ -23,7 +27,7 @@ mod runtime_path;
 /// accepts an integer literal from 100 through 999 and defaults to 500.
 /// `#[problem(409)]` is shorthand for `#[problem(status = 409)]`; use a separate
 /// attribute for other declarations. Both forms share validation and duplicate checks.
-/// Optional `detail` supports Rust named-field formatting with literal width
+/// Optional `detail` supports named fields or explicit tuple indexes with literal width
 /// and precision; dynamic formatting
 /// parameters are unsupported. Other fields remain diagnostic.
 #[proc_macro_derive(Problem, attributes(problem))]

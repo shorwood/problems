@@ -17,10 +17,34 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<Tokens> {
 }
 
 pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Result<Tokens> {
-    let Data::Enum(data) = &input.data else {
-        return Err(syn::Error::new(input.span(), "Problem derives on enums"));
+    let (entries, prefix, is_struct) = match &input.data {
+        Data::Enum(data) => (
+            data.variants
+                .iter()
+                .map(|variant| {
+                    (
+                        &variant.ident,
+                        &variant.attrs,
+                        &variant.fields,
+                        variant.span(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            prefix(&input.attrs)?,
+            false,
+        ),
+        Data::Struct(data) => (
+            vec![(&input.ident, &input.attrs, &data.fields, input.span())],
+            None,
+            true,
+        ),
+        Data::Union(_) => {
+            return Err(syn::Error::new(
+                input.span(),
+                "Problem derives on enums or structs",
+            ));
+        }
     };
-    let prefix = prefix(&input.attrs)?;
     let mut type_uris = BTreeSet::new();
     let name = &input.ident;
     let mut definition_arms = Vec::new();
@@ -35,26 +59,40 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         .predicates
         .push(syn::parse_quote!(Self: ::std::error::Error));
 
-    for variant in &data.variants {
-        for field in &variant.fields {
+    for &(variant_name, attributes, variant_fields, span) in &entries {
+        let constructor = if is_struct {
+            quote!(Self)
+        } else {
+            quote!(Self::#variant_name)
+        };
+        for field in variant_fields {
             if let Some(attribute) = field.attrs.iter().find(|a| a.path().is_ident("problem")) {
                 return Err(syn::Error::new(
                     attribute.span(),
-                    "problem attributes belong on variants, not fields",
+                    if is_struct {
+                        "problem attributes belong on the struct, not fields"
+                    } else {
+                        "problem attributes belong on variants, not fields"
+                    },
                 ));
             }
         }
-        let variant_name = &variant.ident;
-        if transparent(&variant.attrs)? {
-            let Fields::Unnamed(fields) = &variant.fields else {
+        if transparent(attributes)? {
+            if is_struct {
                 return Err(syn::Error::new(
-                    variant.span(),
+                    span,
+                    "transparent problem forwarding is supported only on enum variants",
+                ));
+            }
+            let Fields::Unnamed(fields) = variant_fields else {
+                return Err(syn::Error::new(
+                    span,
                     "transparent requires a single-field tuple variant",
                 ));
             };
             if fields.unnamed.len() != 1 {
                 return Err(syn::Error::new(
-                    variant.span(),
+                    span,
                     "transparent requires a single-field tuple variant",
                 ));
             }
@@ -73,22 +111,17 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             definition_iter = quote!(::std::iter::Iterator::chain(#definition_iter, <#ty as #runtime::Problem>::definitions()));
             continue;
         }
-        let declaration = declaration(
-            &variant.attrs,
-            variant.span(),
-            &variant.ident,
-            prefix.as_ref(),
-        )?;
+        let declaration = declaration(attributes, span, variant_name, prefix.as_ref())?;
         if !type_uris.insert(declaration.type_uri.value()) {
             return Err(syn::Error::new(
                 declaration.type_uri.span(),
                 "duplicate problem type URI; set a distinct type_uri explicitly",
             ));
         }
-        let pattern = match variant.fields {
-            Fields::Unit => quote!(Self::#variant_name),
-            Fields::Named(_) => quote!(Self::#variant_name { .. }),
-            Fields::Unnamed(_) => quote!(Self::#variant_name(..)),
+        let pattern = match variant_fields {
+            Fields::Unit => quote!(#constructor),
+            Fields::Named(_) => quote!(#constructor { .. }),
+            Fields::Unnamed(_) => quote!(#constructor(..)),
         };
         let Declaration {
             type_uri,
@@ -110,17 +143,21 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             status: #status,
             title: #title,
         });
-        let constant_name = variant_name.unraw().to_string().to_shouty_snake_case();
+        let constant_name = if is_struct {
+            "DEFINITION".to_owned()
+        } else {
+            variant_name.unraw().to_string().to_shouty_snake_case()
+        };
         if !constant_names.insert(constant_name.clone()) {
             return Err(syn::Error::new(
                 variant_name.span(),
                 "problem variants generate the same definition constant name",
             ));
         }
-        if data
-            .variants
-            .iter()
-            .any(|v| v.ident.unraw() == constant_name)
+        if !is_struct
+            && entries
+                .iter()
+                .any(|(ident, _, _, _)| ident.unraw() == constant_name)
         {
             return Err(syn::Error::new(
                 variant_name.span(),
@@ -138,18 +175,17 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         definition_iter = quote!(::std::iter::Iterator::chain(#definition_iter, ::std::iter::once(&Self::#constant)));
 
         if let Some(detail) = detail {
-            let tuple = matches!(variant.fields, Fields::Unnamed(_));
+            let tuple = matches!(variant_fields, Fields::Unnamed(_));
             let (detail, fields) = detail_fields(&detail, tuple)?;
             let mut bindings = Vec::new();
-            let mut tuple_bindings = vec![quote!(_); variant.fields.len()];
+            let mut tuple_bindings = vec![quote!(_); variant_fields.len()];
             for (field_name, traits) in fields {
                 let field = if tuple {
-                    variant
-                        .fields
+                    variant_fields
                         .iter()
                         .nth(field_name.parse::<usize>().unwrap())
                 } else {
-                    variant.fields.iter().find(|field| {
+                    variant_fields.iter().find(|field| {
                         field
                             .ident
                             .as_ref()
@@ -189,9 +225,9 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             let detail_pattern = if bindings.is_empty() {
                 pattern.clone()
             } else if tuple {
-                quote!(Self::#variant_name(#(#tuple_bindings),*))
+                quote!(#constructor(#(#tuple_bindings),*))
             } else {
-                quote!(Self::#variant_name { #(#bindings),*, .. })
+                quote!(#constructor { #(#bindings),*, .. })
             };
             detail_arms.push(quote!(#detail_pattern => ::std::option::Option::Some(::std::format!(#detail, #(#bindings = #bindings),*))));
         } else {
@@ -199,7 +235,7 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         }
     }
 
-    let instance = if data.variants.is_empty() {
+    let instance = if entries.is_empty() {
         quote!(*self)
     } else {
         quote!(self)
