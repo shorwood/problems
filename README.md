@@ -78,17 +78,20 @@ The referenced component schema includes the public document and its typed
 
 ## Setup
 
-This repository contains the `problems` runtime crate and the `problems-derive`
-procedural macro crate. They are not published to crates.io yet. After cloning
-the repository into `~/Workspaces/problems`, use a local path:
+Add `problems` to your `Cargo.toml`. Enable the `aide` feature to use the
+Axum and OpenAPI integration shown above:
 
 ```toml
 [dependencies]
-problems = { path = "../problems/crates/problems", features = ["aide"] }
+problems = { version = "0.1", features = ["aide"] }
 axum = "0.8"
 aide = { version = "0.15", features = ["axum"] }
 thiserror = "2"
 ```
+
+The default `derive` feature includes `problems-derive` and re-exports
+`#[derive(Problem)]`; no separate macro dependency is needed. Enable only the
+framework features your application uses.
 
 ## Features
 
@@ -125,14 +128,15 @@ are omitted when absent.
 
 Return `Result<T, Report<E>>` from Axum handlers. Keep the concrete `Report<E>`
 return type when using Aide so it can read the response declarations.
-See the [runnable Axum example](crates/problems/examples/axum.rs).
+See the [runnable Axum example](https://docs.rs/crate/problems/latest/source/examples/axum.rs).
 
 The application classifies failures and handles framework rejections. Creating
 or rendering a report does not log errors or automatically convert unrelated
 failures into problems.
 
-See [runtime documentation](crates/problems/src/lib.rs), [derive documentation](crates/problems-derive/src/lib.rs),
-and [framework examples](crates/problems/examples/) for the full API and attribute grammar.
+See [runtime documentation](https://docs.rs/problems),
+[derive documentation](https://docs.rs/problems-derive),
+and [framework examples](https://docs.rs/crate/problems/latest/source/examples/) for the full API and attribute grammar.
 
 ## Contributing
 
