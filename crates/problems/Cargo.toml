@@ -3,8 +3,10 @@ name = "problems"
 version = "0.1.0"
 edition = "2024"
 description = "Typed HTTP problem declarations with optional RFC 9457 reporting."
-publish = false
+publish = ["crates-io"]
 license.workspace = true
+license-file.workspace = true
+repository.workspace = true
 readme = "../../README.md"
 
 [features]
@@ -77,3 +79,6 @@ test = true
 name = "warp"
 required-features = ["derive", "warp"]
 test = true
+
+[package.metadata.docs.rs]
+all-features = true

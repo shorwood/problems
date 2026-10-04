@@ -4,6 +4,8 @@ resolver = "3"
 
 [workspace.package]
 license = "MIT"
+license-file = "LICENSE"
+repository = "https://github.com/shorwood/problems"
 
 [workspace.dependencies]
 actix-web = { version = "4.15.0", default-features = false }
