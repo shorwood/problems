@@ -1,0 +1,9 @@
+/target/
+**/*.rs.bk
+
+# Keep application code and local guidance out of this repository.
+/api/
+/crates/api/
+docs/
+.agents/
+AGENTS.md

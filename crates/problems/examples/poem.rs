@@ -1,7 +1,7 @@
 //! Run with `cargo run -p problems --example poem --features poem`.
 //! Request `GET http://127.0.0.1:3000/problem` to see the public conflict document.
 
-use problems::{IntoReport, Report, StatusCode};
+use problems::{IntoReport, Report};
 
 #[derive(Debug, thiserror::Error, problems::Problem)]
 enum CreateProblem {
@@ -44,6 +44,7 @@ async fn main() -> std::io::Result<()> {
 mod tests {
     use super::*;
     use poem::{Endpoint, Request};
+    use problems::StatusCode;
 
     #[tokio::test]
     async fn problem_response() -> Result<(), Box<dyn std::error::Error>> {

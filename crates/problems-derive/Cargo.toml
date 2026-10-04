@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Derive typed problem metadata and formatted public detail."
 publish = false
+license.workspace = true
+readme = "../../README.md"
 
 [lib]
 proc-macro = true
@@ -18,6 +20,6 @@ thiserror = { workspace = true }
 proc-macro-error2 = { version = "2.0.1", default-features = false }
 
 [dev-dependencies]
-issues = { package = "problems", path = "../problems", default-features = false }
+issues = { package = "problems", version = "0.1.0", path = "../problems", default-features = false }
 serde_json = { workspace = true }
 trybuild = "1.0.121"

@@ -1,0 +1,20 @@
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    # https://rustsec.org/advisories/RUSTSEC-2026-0173
+    { id = "RUSTSEC-2026-0173", reason = "The latest proc-macro-error2 has no maintained release; retain existing diagnostics during extraction and defer replacement." },
+]
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "Unicode-3.0", "Zlib"]
+
+[bans]
+# Framework integrations can require different versions of shared dependencies.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

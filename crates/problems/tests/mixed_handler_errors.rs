@@ -59,6 +59,10 @@ fn store(case: u8) -> Result<(), StorageProblem> {
 }
 
 // Existing framework erasure: each original error is first made a report.
+#[allow(
+    clippy::result_large_err,
+    reason = "Exercises Axum's erased error response type"
+)]
 async fn erased(Path(case): Path<u8>) -> axum::response::Result<&'static str> {
     authenticate(case).map_err(IntoReport::into_report)?;
     lookup(case).map_err(IntoReport::into_report)?;

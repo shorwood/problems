@@ -286,7 +286,7 @@ fn openapi_shares_typed_payload_union_across_statuses() {
         Err(Handler::Tuple(3).into_report())
     }
     aide::generate::in_context(|context| {
-        context.schema = schemars::SchemaGenerator::default();
+        context.schema = Default::default();
     });
     let mut api = aide::openapi::OpenApi::default();
     let _: axum::Router = aide::axum::ApiRouter::new()
@@ -299,6 +299,11 @@ fn openapi_shares_typed_payload_union_across_statuses() {
         first,
         &responses["429"]["content"]["application/problem+json"]["schema"]
     );
+    let reference = first["$ref"].as_str().unwrap();
+    let component = json.pointer(reference.strip_prefix('#').unwrap()).unwrap();
+    assert_eq!(component["properties"]["status"]["type"], "integer");
+    assert_eq!(component["properties"]["status"]["minimum"], 100);
+    assert_eq!(component["properties"]["status"]["maximum"], 999);
     let schemas = json["components"]["schemas"].to_string();
     assert!(schemas.contains("seconds"));
     assert!(schemas.contains("request"));

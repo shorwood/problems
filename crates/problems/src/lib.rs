@@ -290,7 +290,7 @@ pub struct ProblemDetails<D = ()> {
     /// Human-readable summary shared by occurrences of this problem type.
     title: &'static str,
 
-    /// Declared HTTP status, serialized as an integer.
+    /// Declared HTTP status, serialized as an integer. This member is advisory.
     #[serde(serialize_with = "serialize_status")]
     #[cfg_attr(
         feature = "schemars",
@@ -1030,8 +1030,14 @@ where
         ctx: &mut aide::generate::GenContext,
         _: &mut aide::openapi::Operation,
     ) -> Option<aide::openapi::Response> {
-        // --- Generate the shared document schema through Aide's schema context.
-        let schema = ctx.schema.subschema_for::<ProblemDetails<E::Data>>();
+        // --- Bridge Schemars 1 schemas into Aide's Schemars 0.9 context through JSON.
+        let mut generator = schemars::generate::SchemaSettings::openapi3().into_generator();
+        let schema = generator.subschema_for::<ProblemDetails<E::Data>>();
+        let schema = serde_json::from_value(schema.to_value())
+            .expect("Schemars schemas are JSON objects or booleans");
+        ctx.schema
+            .definitions_mut()
+            .extend(generator.take_definitions(true));
 
         // --- Describe the JSON media type using that schema for every problem response.
         let mut response = aide::openapi::Response {

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Typed HTTP problem declarations with optional RFC 9457 reporting."
 publish = false
+license.workspace = true
+readme = "../../README.md"
 
 [features]
 default = ["derive"]
@@ -15,13 +17,14 @@ poem = ["dep:poem", "dep:tokio"]
 salvo = ["dep:salvo"]
 warp = ["dep:warp"]
 schemars = ["dep:schemars"]
-aide = ["axum", "dep:aide", "schemars"]
+aide = ["axum", "dep:aide", "dep:serde_json", "schemars"]
 
 [dependencies]
 tokio = { workspace = true, optional = true, features = ["net"] }
 http = { workspace = true }
 problems-derive = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 actix-web = { workspace = true, optional = true }
 rocket = { workspace = true, features = ["json"], optional = true }

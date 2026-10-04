@@ -78,11 +78,13 @@ The referenced component schema includes the public document and its typed
 
 ## Setup
 
-This crate is part of the workspace and is not published. From a sibling crate:
+This repository contains the `problems` runtime crate and the `problems-derive`
+procedural macro crate. They are not published to crates.io yet. After cloning
+the repository into `~/Workspaces/problems`, use a local path:
 
 ```toml
 [dependencies]
-problems = { path = "../problems", features = ["aide"] }
+problems = { path = "../problems/crates/problems", features = ["aide"] }
 axum = "0.8"
 aide = { version = "0.15", features = ["axum"] }
 thiserror = "2"
@@ -102,6 +104,10 @@ thiserror = "2"
 | `schemars` | Schemas for documents and generated public payloads |
 | `aide` | OpenAPI response schemas and declared statuses; enables `axum` and `schemars` |
 
+Schema support uses Schemars 1.2. Aide 0.15 still depends on Schemars 0.9;
+the integration transfers generated schemas and component definitions through
+their shared JSON representation. Schemars 0.9 remains a transitive dependency.
+
 ## API
 
 - `Problem` defines what clients see: type, title, status, detail, and data.
@@ -119,14 +125,14 @@ are omitted when absent.
 
 Return `Result<T, Report<E>>` from Axum handlers. Keep the concrete `Report<E>`
 return type when using Aide so it can read the response declarations.
-See the [runnable Axum example](examples/axum.rs).
+See the [runnable Axum example](crates/problems/examples/axum.rs).
 
 The application classifies failures and handles framework rejections. Creating
 or rendering a report does not log errors or automatically convert unrelated
 failures into problems.
 
-See [runtime documentation](src/lib.rs), [derive documentation](../problems-derive/src/lib.rs),
-and [framework examples](examples/) for the full API and attribute grammar.
+See [runtime documentation](crates/problems/src/lib.rs), [derive documentation](crates/problems-derive/src/lib.rs),
+and [framework examples](crates/problems/examples/) for the full API and attribute grammar.
 
 ## Contributing
 
@@ -134,6 +140,22 @@ Keep changes focused and cover changed behavior. Enable the relevant feature
 when changing an integration.
 
 ```sh
-cargo test -p problems -p problems-derive
 cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo test -p problems --no-default-features --locked
+cargo deny --all-features check
 ```
+
+The GitHub Actions CI runs these checks on pushes and pull requests using stable
+Rust. Install the dependency checker with `cargo install cargo-deny --locked`.
+The committed lockfile records the tested dependency versions.
+
+`deny.toml` records one targeted maintenance advisory exception for
+[`proc-macro-error2`](https://rustsec.org/advisories/RUSTSEC-2026-0173).
+Its latest stable release is unmaintained; replacing the diagnostic layer is
+deferred from this extraction.
+
+## License
+
+Licensed under the [MIT license](LICENSE).
