@@ -19,7 +19,6 @@
 
 use heck::{ToKebabCase, ToShoutySnakeCase, ToTitleCase};
 use proc_macro::TokenStream;
-use proc_macro_error2::{Diagnostic, DiagnosticExt, Level, SpanRange};
 use proc_macro2::{Span, TokenStream as Tokens, TokenTree};
 use quote::{ToTokens, format_ident, quote};
 use std::collections::{BTreeMap, BTreeSet};
@@ -256,30 +255,35 @@ enum ProblemDiagnostic {
 
 impl ProblemDiagnostic {
     fn at(self, tokens: impl ToTokens) -> MacroError {
-        self.diagnostic(SpanRange::from_tokens(&tokens)).into()
+        syn::Error::new_spanned(tokens, self.message()).into()
     }
 
     fn at_span(self, span: Span) -> MacroError {
-        self.diagnostic(SpanRange::single_span(span)).into()
+        syn::Error::new(span, self.message()).into()
     }
 
     /// Report the conflict and preserve the original declaration as a second location.
     fn conflict(self, span: Span, first: Span) -> MacroError {
-        self.diagnostic(SpanRange::single_span(span))
-            .span_error(first, Self::FirstDeclaration.to_string())
-            .into()
+        let mut error = syn::Error::new(span, self.message());
+        error.combine(syn::Error::new(first, Self::FirstDeclaration));
+        error.into()
     }
 
     /// Attach help and notes before rendering the diagnostic into compiler errors.
-    fn diagnostic(&self, range: SpanRange) -> Diagnostic {
-        let mut diagnostic = Diagnostic::spanned_range(range, Level::Error, self.to_string());
-        if let Some(help) = self.help() {
-            diagnostic = diagnostic.help(help.to_owned());
+    fn message(&self) -> String {
+        let mut message = self.to_string();
+        let help = self.help();
+        let note = self.note();
+        if help.is_some() || note.is_some() {
+            message.push_str("\n\n");
+            for (kind, text) in [("help", help), ("note", note.as_deref())] {
+                if let Some(text) = text {
+                    message.push_str(&format!("  = {kind}: {text}\n"));
+                }
+            }
+            message.push('\n');
         }
-        if let Some(note) = self.note() {
-            diagnostic = diagnostic.note(note);
-        }
-        diagnostic
+        message
     }
 
     fn help(&self) -> Option<&'static str> {
@@ -412,12 +416,6 @@ impl MacroError {
 impl From<syn::Error> for MacroError {
     fn from(error: syn::Error) -> Self {
         Self(error.into_compile_error())
-    }
-}
-
-impl From<Diagnostic> for MacroError {
-    fn from(diagnostic: Diagnostic) -> Self {
-        Self(diagnostic.into_token_stream())
     }
 }
 

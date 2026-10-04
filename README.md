@@ -151,11 +151,6 @@ The GitHub Actions CI runs these checks on pushes and pull requests using stable
 Rust. Install the dependency checker with `cargo install cargo-deny --locked`.
 The committed lockfile records the tested dependency versions.
 
-`deny.toml` records one targeted maintenance advisory exception for
-[`proc-macro-error2`](https://rustsec.org/advisories/RUSTSEC-2026-0173).
-Its latest stable release is unmaintained; replacing the diagnostic layer is
-deferred from this extraction.
-
 ## License
 
 Licensed under the [MIT license](LICENSE).
