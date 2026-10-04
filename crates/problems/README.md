@@ -234,6 +234,80 @@ HTTP adapters use consuming projection; borrowed adapters and Actix's
 comes from the original error. `into_problem()` recovers that error and discards
 the attached occurrence context.
 
+## Structured validation responses
+
+`Report` projects only `type`, `title`, `status`, optional `detail`, and optional
+`instance`. Other error fields remain diagnostic, including collections of field
+errors. Converting an error into a report does not add extension members:
+
+```rust
+use problems::IntoReport;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[error("invalid fields: {fields:?}")]
+#[problem(type_uri = "urn:example:invalid-input", status = 422,
+          detail = "Correct the invalid fields and retry.")]
+struct InvalidInput {
+    fields: Vec<String>,
+}
+
+let document = InvalidInput { fields: vec!["email".into()] }
+    .into_report()
+    .into_details();
+assert_eq!(serde_json::to_value(document).unwrap(), serde_json::json!({
+    "type": "urn:example:invalid-input",
+    "title": "Invalid Input",
+    "status": 422,
+    "detail": "Correct the invalid fields and retry."
+}));
+```
+
+When clients need field identities and validation codes, define an application
+response with that explicit contract. For example, an Axum application can return
+its own JSON body with HTTP 422:
+
+```rust
+use axum::{Json, http::StatusCode, response::IntoResponse};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct FieldError {
+    field: String,
+    code: String,
+}
+
+#[derive(Serialize)]
+struct ValidationResponse {
+    errors: Vec<FieldError>,
+}
+
+fn invalid_email() -> impl IntoResponse {
+    let body = ValidationResponse {
+        errors: vec![FieldError {
+            field: "email".into(),
+            code: "invalid_format".into(),
+        }],
+    };
+    (StatusCode::UNPROCESSABLE_ENTITY, Json(body))
+}
+
+let response = invalid_email().into_response();
+assert_eq!(response.status(), 422);
+assert_eq!(response.headers()["content-type"], "application/json");
+```
+
+The application owns this body's schema, field naming, validation codes, and
+OpenAPI declaration. It uses `application/json` and is returned independently
+of `Report`; the problem adapter does not document it automatically. Clients can
+read `errors[*].field` and `errors[*].code` without parsing human messages.
+
+[RFC 9457 permits extension members](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.2),
+but this library currently provides no extension writer, field annotation, or
+payload flattening. Adding arbitrary problem extensions requires a separate API
+design decision. The RFC also advises against
+[parsing `detail` for programmatic data](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.4).
+Use stable structured fields when clients need them; keep `detail` for people.
+
 ## URI references
 
 Callers must supply valid URI references for `type_uri`, generated type URIs,
