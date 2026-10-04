@@ -1,11 +1,25 @@
-//! Declares public HTTP problems and projects them into RFC 9457 documents.
+//! Turn Rust errors into public HTTP error documents, following [RFC 9457].
 //!
-//! Errors retain their diagnostic formatting and source chains. Reports expose
-//! the declared public metadata and can be serialized with any Serde encoder.
-//! The default `derive` feature supports enum declarations. Optional `axum`,
-//! `actix-web`, `rocket`, `poem`, `salvo`, and `warp` features provide JSON HTTP
-//! responses. `schemars` provides document schemas; `aide` adds declared OpenAPI
-//! response statuses.
+//! The library separates an error's diagnostic message and source chain from
+//! the information sent to clients:
+//!
+//! 1. Implement [`Problem`] to declare the public type URI, title, status, and
+//!    optional explanation (`detail`) or structured payload (`data`). The default
+//!    `derive` feature provides `#[derive(Problem)]` for structs and enums.
+//! 2. Wrap the error in a [`Report`] using [`IntoReport::into_report`]. The report
+//!    keeps the original error available for logging or inspection.
+//! 3. Use [`Report::as_details`] to borrow public data, or [`Report::into_details`]
+//!    to move it into [`ProblemDetails`]. Serialize these details with Serde.
+//!
+//! To read a received document, deserialize a [`ProblemDocument<D>`], choosing
+//! `D` to match its `data` payload.
+//!
+//! Optional `axum`, `actix-web`, `rocket`, `poem`, `salvo`, and `warp` features
+//! let reports produce JSON responses with the declared HTTP status and
+//! `application/problem+json` content type. `schemars` adds document schemas;
+//! `aide` documents the declared response statuses and schema in OpenAPI.
+//!
+//! [RFC 9457]: https://www.rfc-editor.org/rfc/rfc9457.html
 
 extern crate self as problems;
 
@@ -52,15 +66,17 @@ pub mod __private {
 /* Problem Definition                   */
 /****************************************/
 
-/// Defines the identity, title, and HTTP status shared by occurrences of a problem.
-/// Reports use this metadata for their public document. OpenAPI generation uses
-/// the same definitions to describe the responses an operation can return.
+/// The public identity, summary, and HTTP status of a problem type.
+///
+/// A definition is shared by all occurrences of that problem. For example,
+/// every name conflict has the same type URI and status, while its [`Problem::detail`]
+/// can explain which name was taken. Reports and OpenAPI use the same definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProblemDefinition {
-    /// RFC 9457 `type`, used by clients as the primary problem identifier.
-    /// The caller supplies a valid URI reference; syntax is not validated.
+    /// Stable URI reference identifying the problem type (serialized as `type`).
+    /// URI syntax is not validated.
     pub type_uri: &'static str,
-    /// Short summary, stable between occurrences.
+    /// Short, human-readable summary shared by occurrences of this problem.
     pub title: &'static str,
     /// HTTP response status, also included in the public document.
     pub status: StatusCode,
@@ -70,79 +86,149 @@ pub struct ProblemDefinition {
 /* Problem                               */
 /****************************************/
 
-/// Attaches public problem metadata to an ordinary Rust error.
-/// Diagnostic formatting and source chains remain the responsibility of the error.
-/// Only the definition, detail, instance, and explicitly selected data enter the public document.
+/// Declares which parts of a Rust error are public.
 ///
-/// Implement this trait directly, or use `#[derive(Problem)]` with the `derive`
-/// feature, enabled by default. Unit, named-field, and tuple variants or structs
-/// are accepted. Struct metadata goes on the type, requires `type_uri`, and
-/// exposes `DEFINITION`; `definitions()` yields that single definition.
-/// Tuple detail uses explicit indexes such as `{0}`; diagnostic sources cannot
-/// be interpolated.
-/// The derive implements `definition()` and
-/// `definitions()` from each variant's `#[problem(...)]` declaration. It also
-/// implements `detail()` when a detail format is declared, using the variant's
-/// named fields or explicit tuple indexes. Status accepts an integer literal from 100 through 999 and defaults to
-/// `StatusCode::INTERNAL_SERVER_ERROR` when omitted. `instance()` defaults to `None`.
-/// `#[problem(409)]` abbreviates `#[problem(status = 409)]`. Titles default to
-/// the variant name in Title Case, such as `NameConflict` becoming `Name Conflict`.
-/// An enum prefix generates type URIs from kebab-case variant names. Explicit
-/// variant `type_uri` declarations override it; without a prefix they are required.
-/// Each locally declared variant exposes a definition constant in SHOUTY_SNAKE_CASE,
-/// such as `NAME_CONFLICT`. Transparent variants use their wrapped definitions.
-/// Prefixes ending in `:` or `/` are used directly; otherwise a colon is appended.
-/// Generated URIs change when variants are renamed. Keep an explicit URI when
-/// renaming a variant must preserve its public identity. Duplicate locally declared
-/// URIs are rejected; delegated lists are chained as provided by their types.
-/// Single-field tuple variants marked `#[problem(transparent)]` delegate their
-/// definition, detail, and instance to the wrapped `Problem`. Their definitions
-/// are chained into the enclosing enum's iterator in variant order.
+/// [`std::fmt::Display`] and [`std::error::Error::source`] provide diagnostics.
+/// Reports build the public document from this trait's methods; they do not
+/// copy the diagnostic message or source chain into it. Write `detail` for
+/// clients and select only fields that are safe to expose as `data`.
 ///
-/// Select named fields with `#[problem(data)]`, or rename with
-/// `#[problem(data = "public_name")]`. Tuple fields require explicit names.
-/// Sources cannot be selected. The generated `<Type>Data` container is generic
-/// over selected fields; borrowed projections use references, consuming
-/// projections move fields.
+/// # Deriving a problem
 ///
-/// The derive leaves `Display` and `Error` to your error implementation.
-/// For example, declare a conflict and include its name in the public explanation:
+/// `#[derive(Problem)]` works on structs and enums with named, tuple, or unit
+/// fields. It requires the `derive` feature, enabled by default. Implement
+/// `Display` and `Error` separately, for example with `thiserror`.
 ///
 /// ```rust
 /// # #[cfg(feature = "derive")]
 /// # {
-/// use problems::{IntoReport, Problem, StatusCode};
+/// use problems::{IntoReport, StatusCode};
 ///
+/// // --- Declare the diagnostic error and its public explanation.
 /// #[derive(Debug, thiserror::Error, problems::Problem)]
 /// #[problem(prefix = "urn:example")]
 /// enum CreateProblem {
 ///     #[error("duplicate name: {name}")]
-///     #[problem(
-///         status = 409,
-///         title = "Name conflict",
-///         detail = "The name '{name}' is already in use."
-///     )]
-///     NameConflict { name: String },
+///     #[problem(status = 409, detail = "The name '{name}' is already in use.")]
+///     NameConflict {
+///         #[problem(data)]
+///         name: String,
+///     },
 /// }
 ///
-/// let report = CreateProblem::NameConflict { name: "example".into() }.into_report();
-/// assert_eq!(report.problem().definition().status, StatusCode::CONFLICT);
-/// assert_eq!(report.problem().definition().type_uri, "urn:example:name-conflict");
-/// assert_eq!(report.problem().detail().as_deref(), Some("The name 'example' is already in use."));
+/// // --- Wrap an occurrence and build the public document.
+/// let report = CreateProblem::NameConflict { name: "monthly".into() }.into_report();
+/// let details = report.as_details();
+/// assert_eq!(details.status(), StatusCode::CONFLICT);
+/// assert_eq!(details.type_uri(), "urn:example:name-conflict");
+/// assert_eq!(details.detail(), Some("The name 'monthly' is already in use."));
+///
+/// // --- Serialize the public fields; diagnostics remain on the original error.
+/// let body = serde_json::to_value(&details)?;
+/// assert_eq!(body["data"]["name"], "monthly");
+/// assert!(body.get("instance").is_none());
+/// assert_eq!(report.problem().to_string(), "duplicate name: monthly");
 /// # }
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+///
+/// # Public metadata
+///
+/// Put `#[problem(...)]` on a struct or on each enum variant:
+///
+/// - `type_uri = "..."` sets the stable identifier clients use to recognize the
+///   problem. It is required unless an enum supplies a prefix.
+/// - `status = 409` sets the HTTP status. Accepted values are 100–999; the default
+///   is 500. Use `#[problem(409)]` as a separate attribute for the shorthand.
+/// - `title = "..."` sets the summary. By default, the struct or variant name is
+///   converted to Title Case: `NameConflict` becomes `Name Conflict`.
+/// - `detail = "..."` formats an explanation using named fields or explicit
+///   tuple indexes such as `{0}`. Diagnostic sources cannot be interpolated.
+///   Without a format, there is no detail.
+///
+/// An enum's `#[problem(prefix = "urn:example")]` generates a type URI for each
+/// local variant, such as `urn:example:name-conflict`. Prefixes ending in `:` or
+/// `/` are used directly; other prefixes get a colon separator. A variant's
+/// explicit `type_uri` overrides the generated URI. Use an explicit URI when
+/// renaming a variant must preserve its public identity. Duplicate local URIs
+/// are rejected.
+///
+/// The derive also generates definition constants: `DEFINITION` for a struct,
+/// or the variant name in SHOUTY_SNAKE_CASE, such as `NAME_CONFLICT`, for an enum.
+/// [`Problem::definitions`] lists them without constructing errors.
+///
+/// # Structured public data
+///
+/// `#[problem(data)]` includes a named field under `data`.
+/// `#[problem(data = "public_name")]` changes its serialized name and is required
+/// for tuple fields. Diagnostic source fields cannot be selected.
+///
+/// Selected fields produce a `<Type>Data` struct or enum, with one generic
+/// parameter per selected field in declaration order. Borrowing uses references
+/// as those parameters; consuming uses the original field types. Neither requires
+/// cloning the error. A problem with no public data uses `()` for its payload
+/// types and omits `data`. Generated data enums are Serde-untagged: their serialized
+/// payloads contain no variant tag.
+///
+/// # Combining problems
+///
+/// A single-field tuple variant marked `#[problem(transparent)]` forwards its
+/// definition, detail, instance, and data to the wrapped `Problem`. Its definitions
+/// join the enclosing enum's list in variant order. It has no local definition
+/// constant or separate public metadata.
+///
+/// # Manual implementation
+///
+/// Without the derive, implement the required metadata methods and payload types.
+/// Use `()` for both payload types when there is no public data. The optional
+/// `detail`, `instance`, `data`, and `into_data` methods default to `None`.
+///
+/// ```rust
+/// use problems::{IntoReport, Problem, ProblemDefinition, StatusCode};
+///
+/// // --- Define an error and the metadata shared by all its occurrences.
+/// #[derive(Debug, thiserror::Error)]
+/// #[error("record not found")]
+/// struct MissingRecord;
+///
+/// const MISSING: ProblemDefinition = ProblemDefinition {
+///     type_uri: "urn:example:missing-record",
+///     title: "Record not found",
+///     status: StatusCode::NOT_FOUND,
+/// };
+///
+/// // --- Implement the public contract without a payload.
+/// impl Problem for MissingRecord {
+///     type Data = ();
+///     type DataRef<'a> = ();
+///
+///     fn definition(&self) -> &'static ProblemDefinition {
+///         &MISSING
+///     }
+///
+///     fn definitions() -> impl Iterator<Item = &'static ProblemDefinition> {
+///         std::iter::once(&MISSING)
+///     }
+/// }
+///
+/// // --- Use the same report API as a derived problem.
+/// let details = MissingRecord.into_report().into_details();
+/// assert_eq!(details.status(), StatusCode::NOT_FOUND);
+/// assert!(details.data().is_none());
 /// ```
 pub trait Problem: std::error::Error {
-    /// Owned fields explicitly selected for the public document.
+    /// Payload returned by [`Self::into_data`]. Use `()` when there is no data.
     type Data: serde::Serialize
     where
         Self: Sized;
 
-    /// Borrowed projection of selected public fields.
+    /// Payload returned by [`Self::data`], usually containing references to fields.
+    /// Use `()` when there is no data.
     type DataRef<'a>: serde::Serialize
     where
         Self: Sized + 'a;
 
-    /// Borrow selected public fields without cloning diagnostic state.
+    /// Borrow the structured public payload. The default is no payload.
     fn data(&self) -> Option<Self::DataRef<'_>>
     where
         Self: Sized,
@@ -150,7 +236,7 @@ pub trait Problem: std::error::Error {
         None
     }
 
-    /// Move selected public fields into an owned document.
+    /// Consume the error to obtain its public payload. The default is no payload.
     fn into_data(self) -> Option<Self::Data>
     where
         Self: Sized,
@@ -158,24 +244,23 @@ pub trait Problem: std::error::Error {
         None
     }
 
-    /// Metadata for this occurrence's problem type.
+    /// Definition of the problem represented by this error occurrence.
     fn definition(&self) -> &'static ProblemDefinition;
 
-    /// Lists all definitions exposed by this error type without constructing values.
-    /// Every definition returned by `definition()` must appear in this list so
-    /// OpenAPI generation describes every possible response.
-    /// Returns an iterator of static references so composed problems can chain
-    /// definition lists without allocating or constructing error values.
+    /// List every definition this error type can return, without constructing errors.
+    ///
+    /// Include every possible result of [`Self::definition`]. OpenAPI uses this
+    /// list to document response statuses and problem types.
     fn definitions() -> impl Iterator<Item = &'static ProblemDefinition>
     where
         Self: Sized;
 
-    /// Optional public explanation for this occurrence.
+    /// Client-facing explanation of this occurrence. The default is no detail.
     fn detail(&self) -> Option<String> {
         None
     }
 
-    /// Optional URI reference identifying this occurrence.
+    /// URI reference identifying this occurrence. The default is no instance.
     fn instance(&self) -> Option<String> {
         None
     }
@@ -185,31 +270,27 @@ pub trait Problem: std::error::Error {
 /* Problem Details                      */
 /****************************************/
 
-/// Details of an HTTP API error, following RFC 9457.
+/// A public error document ready to serialize with Serde.
 ///
-/// Identifies the problem type and describes the individual occurrence.
-/// Optional members are omitted when unavailable. Equality compares all
-/// public members, including the occurrence URI.
+/// Obtain it from [`Report::as_details`] or [`Report::into_details`]. `D` is the
+/// type of the structured `data` payload; it may contain borrowed fields.
+/// The document always includes `type`, `title`, and a numeric `status`.
+/// Optional `detail`, `instance`, and `data` members are omitted when absent.
+///
+/// Equality compares every member, including `instance`. To deserialize a
+/// received body, use [`ProblemDocument`] instead.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct ProblemDetails<D = ()> {
-    /// URI reference identifying the problem type.
-    ///
-    /// Use this value as the primary identifier when handling errors.
-    /// `about:blank` indicates that the HTTP status supplies the problem's meaning.
+    /// URI reference identifying the problem type, serialized as `type`.
     #[serde(rename = "type")]
     type_uri: &'static str,
 
-    /// Human-readable summary of the problem type.
-    ///
-    /// Remains stable across occurrences of the same problem type, except for
-    /// localization. Use `type` to identify the problem programmatically.
+    /// Human-readable summary shared by occurrences of this problem type.
     title: &'static str,
 
-    /// HTTP status code generated by the origin server for this occurrence.
-    ///
-    /// This value is advisory; intermediaries may change the HTTP response status.
+    /// Declared HTTP status, serialized as an integer.
     #[serde(serialize_with = "serialize_status")]
     #[cfg_attr(
         feature = "schemars",
@@ -217,21 +298,15 @@ pub struct ProblemDetails<D = ()> {
     )]
     status: StatusCode,
 
-    /// Human-readable explanation specific to this occurrence.
-    ///
-    /// May help resolve the problem. Clients should not parse this text to
-    /// extract information for programmatic handling. Omitted when unavailable.
+    /// Explanation for this occurrence. Omitted when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
 
-    /// URI reference identifying this particular occurrence of the problem.
-    ///
-    /// May identify the occurrence without providing a retrievable resource.
-    /// Omitted when unavailable.
+    /// URI reference identifying this occurrence. Omitted when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
 
-    /// Explicit public values for programmatic handling or interpolation.
+    /// Structured payload selected for clients. Omitted when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<D>,
 }
@@ -249,29 +324,29 @@ impl<D> ProblemDetails<D> {
         self.status
     }
 
-    /// Stable problem identity.
+    /// URI reference identifying the problem type (the document's `type` member).
     pub const fn type_uri(&self) -> &'static str {
         self.type_uri
     }
 
-    /// Stable public title.
+    /// Human-readable summary of the problem type.
     pub const fn title(&self) -> &'static str {
         self.title
     }
 
-    /// Borrow the public explanation for this occurrence.
-    /// Returns `None` when the member is omitted from the document.
+    /// Borrow the public explanation for this occurrence, if present.
+    /// Clients should use the type URI and data for programmatic handling.
     pub fn detail(&self) -> Option<&str> {
         self.detail.as_deref()
     }
 
-    /// Borrow the URI reference identifying this occurrence.
-    /// Returns `None` when the member is omitted from the document.
+    /// Borrow the URI reference identifying this occurrence, if present.
+    /// It need not point to a retrievable resource.
     pub fn instance(&self) -> Option<&str> {
         self.instance.as_deref()
     }
 
-    /// Borrow explicitly selected public values.
+    /// Borrow the structured public payload, if present.
     pub fn data(&self) -> Option<&D> {
         self.data.as_ref()
     }
@@ -281,39 +356,74 @@ impl<D> ProblemDetails<D> {
 /* Problem Document                     */
 /****************************************/
 
-/// Owned public problem metadata with a caller-selected payload type.
+/// A received error document, deserialized with Serde.
 ///
-/// Missing type defaults to `about:blank`; other missing members are absent.
-/// Unknown extensions are discarded. Decoding uses ordinary Serde type checks:
-/// incorrectly typed members fail decoding rather than being ignored as RFC 9457
-/// prescribes. Status values must be integers within 100–999.
+/// Choose `D` to match the structured `data` payload. Use `()` when no payload
+/// is expected, a known struct for typed fields, or `serde_json::Value` for
+/// arbitrary JSON data. The library does not choose a wire format: the Serde
+/// decoder and payload type must both support the incoming representation.
 ///
-/// Equality compares all public members, including the occurrence URI.
-/// `matches()` compares with typed producer details while ignoring that URI.
+/// A missing `type` becomes `about:blank`. Other missing members are `None`;
+/// JSON `null` also means no optional value. Unknown members are discarded.
+/// Incorrect member types fail deserialization, rather than being ignored as
+/// RFC 9457 recommends. A provided status must be an integer in 100–999.
 ///
-/// This document retains neither diagnostic sources nor static definitions. It
-/// does not implement `Problem` or framework response traits.
-/// `D` selects the public payload type used by the deserializer. Use `()` for
-/// problems without a payload or a format's value type for arbitrary data.
-/// Missing or null data is absent.
+/// Use [`Self::is_type`] to recognize a problem by its URI, or [`Self::matches`]
+/// to compare its public fields with expected producer details. `matches` ignores
+/// `instance`; equality includes it. This type contains public values only,
+/// with no original Rust error or source chain.
+///
+/// # Reading typed data from JSON or XML
+///
+/// This example uses the same payload struct for both formats. XML support
+/// depends on the decoder's mapping; not every JSON payload has an equivalent
+/// XML representation.
+///
+/// ```rust
+/// use problems::{ProblemDocument, StatusCode};
+///
+/// // --- Describe the public payload expected from the server.
+/// #[derive(Debug, PartialEq, serde::Deserialize)]
+/// struct RetryData {
+///     seconds: u32,
+/// }
+/// type RetryDocument = ProblemDocument<RetryData>;
+///
+/// // --- Decode each format using its Serde decoder.
+/// let json: RetryDocument = serde_json::from_str(r#"{
+///     "type": "urn:example:retry",
+///     "title": "Retry later",
+///     "status": 429,
+///     "data": {"seconds": 30}
+/// }"#)?;
+/// let xml: RetryDocument = serde_xml_rs::from_str(r#"
+///     <problem xmlns="urn:ietf:rfc:7807">
+///         <type>urn:example:retry</type>
+///         <title>Retry later</title>
+///         <status>429</status>
+///         <data><seconds>30</seconds></data>
+///     </problem>
+/// "#)?;
+///
+/// // --- Work with the same typed values, regardless of the format.
+/// assert_eq!(json, xml);
+/// assert_eq!(json.status(), Some(StatusCode::TOO_MANY_REQUESTS));
+/// assert_eq!(json.data(), Some(&RetryData { seconds: 30 }));
+/// assert_eq!(json.detail(), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct ProblemDocument<D = ()> {
-    /// URI reference identifying the received problem type.
-    ///
-    /// Defaults to `about:blank` when the member is absent.
+    /// Received `type` URI, defaulting to `about:blank` when absent.
     #[serde(rename = "type", default = "default_type")]
     type_uri: String,
 
-    /// Human-readable summary supplied by the producer.
-    ///
-    /// Absent when the document does not supply a title.
+    /// Received summary, if present.
     title: Option<String>,
 
-    /// Advisory HTTP status code supplied by the producer.
-    ///
-    /// Absent when unavailable. The actual HTTP response status remains separate.
+    /// Received status, if present, decoded from an integer.
     #[serde(default, deserialize_with = "deserialize_status")]
     #[cfg_attr(
         feature = "schemars",
@@ -321,18 +431,13 @@ pub struct ProblemDocument<D = ()> {
     )]
     status: Option<StatusCode>,
 
-    /// Human-readable explanation specific to this occurrence.
-    ///
-    /// Absent when unavailable. Clients should not parse this text for
-    /// programmatic handling.
+    /// Received explanation for this occurrence, if present.
     detail: Option<String>,
 
-    /// URI reference identifying this particular occurrence.
-    ///
-    /// Absent when unavailable. Relative references remain unresolved.
+    /// Received occurrence URI reference, if present. Stored without resolution.
     instance: Option<String>,
 
-    /// Explicit public values decoded into the caller's payload type.
+    /// Received structured payload decoded as `D`, if present.
     data: Option<D>,
 }
 
@@ -350,33 +455,34 @@ fn deserialize_status<'de, D: serde::Deserializer<'de>>(
 }
 
 impl<D> ProblemDocument<D> {
-    /// Compare the received problem identity with a declared definition.
+    /// Check whether the received `type` URI equals a declared problem's URI.
     ///
-    /// Compares only the type URI, not occurrence data or diagnostics. Relative
-    /// received references must be resolved by the caller before comparison.
+    /// Other members do not affect this check. URI references are compared as
+    /// strings; resolve relative references yourself when necessary.
     ///
     /// ```rust
     /// # #[cfg(feature = "derive")]
     /// # {
     /// use problems::ProblemDocument;
     ///
+    /// // --- Declare the problem types the client recognizes.
     /// #[derive(Debug, thiserror::Error, problems::Problem)]
     /// #[problem(prefix = "urn:example")]
     /// enum CreateProblem {
-    ///     #[error("private diagnostic: {source}")]
+    ///     #[error("duplicate name")]
     ///     #[problem(409)]
-    ///     NameConflict { source: std::io::Error },
-    ///
+    ///     NameConflict,
     ///     #[error("resource missing")]
     ///     #[problem(404)]
     ///     Missing,
     /// }
     ///
-    /// let received: ProblemDocument = serde_json::from_value(serde_json::json!({
-    ///     "type": "urn:example:name-conflict"
-    /// }))?;
+    /// // --- Read a response containing only the problem identifier.
+    /// let received: ProblemDocument = serde_json::from_str(
+    ///     r#"{"type": "urn:example:name-conflict"}"#,
+    /// )?;
     ///
-    /// // Identify the variant without constructing its diagnostic source.
+    /// // --- Recognize it without constructing an error occurrence.
     /// assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
     /// assert!(!received.is_type(&CreateProblem::MISSING));
     /// # }
@@ -386,51 +492,48 @@ impl<D> ProblemDocument<D> {
         self.type_uri == definition.type_uri
     }
 
-    /// Compare public failure data with typed producer details, ignoring instance.
+    /// Check whether public fields match expected details, ignoring `instance`.
     ///
-    /// Type URI, title, status, detail, and data must match exactly. Missing members
-    /// are not wildcards. Convert details with `ProblemDocument::from()` and use
-    /// `==` to compare the occurrence URI as well.
+    /// Type URI, title, status, detail, and data must all match. A missing member
+    /// is not a wildcard. Payload types may differ if `D` implements `PartialEq<P>`.
+    /// To include the occurrence URI, convert the details with
+    /// [`ProblemDocument::from`] and compare using `==`.
     ///
     /// ```rust
     /// # #[cfg(feature = "derive")]
     /// # {
-    /// use problems::{ProblemDocument, IntoReport};
+    /// use problems::{IntoReport, ProblemDocument};
     ///
+    /// // --- Declare a conflict with a public explanation.
     /// #[derive(Debug, thiserror::Error, problems::Problem)]
     /// #[problem(prefix = "urn:example")]
     /// enum CreateProblem {
-    ///     #[error("private diagnostic: {name}")]
+    ///     #[error("duplicate name: {name}")]
     ///     #[problem(status = 409, detail = "The name '{name}' is already in use.")]
     ///     NameConflict { name: String },
     /// }
     ///
-    /// let expected = CreateProblem::NameConflict {
-    ///     name: "monthly".into(),
-    /// }
-    /// .into_report()
-    /// .with_instance("/occurrences/1")
-    /// .into_details();
+    /// // --- Build the failure expected by a client or an API test.
+    /// let expected = CreateProblem::NameConflict { name: "monthly".into() }
+    ///     .into_report()
+    ///     .with_instance("/occurrences/1")
+    ///     .into_details();
     ///
-    /// let received: ProblemDocument = serde_json::from_value(serde_json::json!({
+    /// // --- Decode the same failure from a different occurrence.
+    /// let received: ProblemDocument = serde_json::from_str(r#"{
     ///     "type": "urn:example:name-conflict",
     ///     "title": "Name Conflict",
     ///     "status": 409,
     ///     "detail": "The name 'monthly' is already in use.",
     ///     "instance": "/occurrences/2"
-    /// }))?;
-    ///
-    /// // The same failure occurred twice, with different occurrence URIs.
+    /// }"#)?;
     /// assert!(received.matches(&expected));
     /// assert_ne!(received, ProblemDocument::from(expected));
     ///
-    /// let different_name = CreateProblem::NameConflict {
-    ///     name: "weekly".into(),
-    /// }
-    /// .into_report()
-    /// .into_details();
-    ///
-    /// // Detail participates in matching: "weekly" differs from "monthly".
+    /// // --- A different explanation makes it a different failure.
+    /// let different_name = CreateProblem::NameConflict { name: "weekly".into() }
+    ///     .into_report()
+    ///     .into_details();
     /// assert!(!received.matches(&different_name));
     /// # }
     /// # Ok::<(), serde_json::Error>(())
@@ -450,12 +553,13 @@ impl<D> ProblemDocument<D> {
             }
     }
 
-    /// Problem identity, defaulting to `about:blank` when unavailable.
+    /// Received `type` URI, or `about:blank` if it was absent.
+    /// `about:blank` means the HTTP status alone describes the problem.
     pub fn type_uri(&self) -> &str {
         &self.type_uri
     }
 
-    /// Borrow the received title, if present and correctly typed.
+    /// Borrow the received title, if present.
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
@@ -467,7 +571,8 @@ impl<D> ProblemDocument<D> {
         self.status
     }
 
-    /// Borrow the received public explanation, if available.
+    /// Borrow the received explanation, if present.
+    /// Clients should use the type URI and data for programmatic handling.
     pub fn detail(&self) -> Option<&str> {
         self.detail.as_deref()
     }
@@ -479,14 +584,17 @@ impl<D> ProblemDocument<D> {
         self.instance.as_deref()
     }
 
-    /// Borrow explicitly selected public values.
+    /// Borrow the structured public payload, if present.
     pub fn data(&self) -> Option<&D> {
         self.data.as_ref()
     }
 }
 
 impl<D> From<ProblemDetails<D>> for ProblemDocument<D> {
-    /// Own the metadata and move the optional payload without serialization.
+    /// Convert producer details into a received-document value without serialization.
+    ///
+    /// Metadata strings become owned; the payload is moved as-is, so any references
+    /// inside it still borrow their original values.
     fn from(details: ProblemDetails<D>) -> Self {
         Self {
             type_uri: details.type_uri.into(),
@@ -503,11 +611,16 @@ impl<D> From<ProblemDetails<D>> for ProblemDocument<D> {
 /* Report                               */
 /****************************************/
 
-/// Retains a typed error for public document and HTTP conversion.
-/// Creating a report performs no serialization or diagnostic reporting. Borrow
-/// or recover the original error to inspect its diagnostic message and sources.
-/// With `actix-web` enabled, `Display` forwards to the original error to satisfy
-/// Actix Web's response error contract. Public responses still use declared metadata.
+/// Keeps the original error while preparing its public document or HTTP response.
+///
+/// Create a report with [`Self::new`] or [`IntoReport::into_report`]. Creation
+/// does not serialize, log, or otherwise report the error. Inspect diagnostics
+/// through [`Self::problem`], or recover the error with [`Self::into_problem`].
+///
+/// [`Self::as_details`] borrows selected public data; [`Self::into_details`]
+/// moves it out. With a framework feature enabled, return `Report<E>` as a
+/// handler's error type to produce a public JSON response. Actix Web also
+/// requires `Display`, which forwards to the original error's diagnostic message.
 #[must_use]
 #[derive(Debug)]
 pub struct Report<E: Problem> {
@@ -516,7 +629,7 @@ pub struct Report<E: Problem> {
 }
 
 impl<E: Problem> Report<E> {
-    /// Retain the original error and its declaration type.
+    /// Wrap an error without serializing or logging it.
     pub const fn new(problem: E) -> Self {
         Self {
             problem,
@@ -524,18 +637,20 @@ impl<E: Problem> Report<E> {
         }
     }
 
-    /// Attach a URI reference identifying this occurrence.
-    /// Overrides the error's instance without changing the original error.
-    /// The caller supplies a valid URI reference; syntax is not validated.
-    /// Relative references require resolution against the document base URI.
+    /// Set the public `instance` URI reference, such as `/occurrences/123`.
+    ///
+    /// This overrides [`Problem::instance`] without changing the error. URI
+    /// syntax is not validated; relative references require a base URI to resolve.
     pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
         self.instance = Some(instance.into());
         self
     }
 
-    /// Consume the report and construct an owned public document.
-    /// Moves the attached instance rather than cloning it. The original error
-    /// is dropped; inspect diagnostics before consuming the report.
+    /// Consume the report and move its selected public data into a document.
+    ///
+    /// The attached instance is also moved. The original error is consumed, so
+    /// inspect or log diagnostics first. See [`Self::as_details`] for a comparison
+    /// of borrowed and owned data.
     pub fn into_details(self) -> ProblemDetails<E::Data> {
         let definition = self.problem.definition();
         ProblemDetails {
@@ -553,34 +668,46 @@ impl<E: Problem> Report<E> {
         &self.problem
     }
 
-    /// Recover the original error without reporting it.
+    /// Consume the report and recover the original error.
     /// Any instance attached to the report is discarded.
     pub fn into_problem(self) -> E {
         self.problem
     }
 
-    /// Project public fields by reference. Serialize before dropping the report.
-    /// Detail rendering and an attached instance still produce owned strings.
+    /// Build public details that borrow the error's selected data fields.
     ///
-    /// ```
+    /// The report remains available for diagnostics and must outlive the borrowed
+    /// data. No error fields are cloned. Rendering `detail` and obtaining
+    /// `instance` may still allocate strings; an attached instance is cloned.
+    /// Use [`Self::into_details`] when the document needs to own its data.
+    ///
+    /// ```rust
     /// # #[cfg(feature = "derive")]
     /// # {
     /// use problems::IntoReport;
     ///
+    /// // --- Select a value that clients can use to schedule a retry.
     /// #[derive(Debug, thiserror::Error, problems::Problem)]
-    /// #[error("private diagnostic")]
+    /// #[error("rate limit reached")]
     /// #[problem(type_uri = "urn:example:retry", status = 429)]
     /// struct Retry {
     ///     #[problem(data)]
     ///     seconds: u32,
     /// }
     ///
+    /// // --- Borrow public data while keeping the original error available.
     /// let report = Retry { seconds: 30 }.into_report();
-    /// assert_eq!(report.as_details().data().unwrap().seconds, &30);
+    /// let borrowed = report.as_details();
+    /// assert_eq!(borrowed.data().unwrap().seconds, &30);
+    /// let body = serde_json::to_value(&borrowed)?;
+    /// assert_eq!(body["data"]["seconds"], 30);
+    /// assert_eq!(report.problem().seconds, 30);
     ///
+    /// // --- Move the data into a document when the report is no longer needed.
     /// let owned = report.into_details();
     /// assert_eq!(owned.data().unwrap().seconds, 30);
     /// # }
+    /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn as_details(&self) -> ProblemDetails<E::DataRef<'_>> {
         let definition = self.problem.definition();
@@ -605,13 +732,13 @@ impl<E: Problem> From<E> for Report<E> {
 /* Into Report                          */
 /****************************************/
 
-/// Converts a problem into a report while retaining its concrete error type.
-/// Every type implementing `Problem` receives this convenience method.
-/// This extension trait does not provide a framework response contract.
-/// Use `Report<E>` as the handler error type to expose response and, with
-/// `aide`, static output metadata implementations.
+/// Adds `.into_report()` to every type implementing [`Problem`].
+///
+/// Import this trait to wrap an error in a [`Report`] without losing its concrete
+/// type. Use `Report<E>` as a handler's error type when returning framework
+/// responses; this convenience trait itself only wraps the error.
 pub trait IntoReport: Problem + Sized {
-    /// Wraps the original error without serialization or diagnostic reporting.
+    /// Wrap the error without serializing or logging it.
     fn into_report(self) -> Report<Self> {
         Report::from(self)
     }
@@ -623,6 +750,30 @@ impl<E: Problem> IntoReport for E {}
 /* Axum Response                        */
 /****************************************/
 
+/// Convert a report into an Axum response with its public JSON body.
+///
+/// ```rust
+/// # #[cfg(all(feature = "derive", feature = "axum"))]
+/// # {
+/// use axum::response::IntoResponse;
+/// use problems::{IntoReport, Report, StatusCode};
+///
+/// // --- Declare the error returned by the handler.
+/// #[derive(Debug, thiserror::Error, problems::Problem)]
+/// #[error("record missing")]
+/// #[problem(type_uri = "urn:example:missing", status = 404)]
+/// struct MissingRecord;
+///
+/// async fn get_record() -> Result<String, Report<MissingRecord>> {
+///     Err(MissingRecord.into_report())
+/// }
+///
+/// // --- Axum converts the handler's report into a problem response.
+/// let response = MissingRecord.into_report().into_response();
+/// assert_eq!(response.status(), StatusCode::NOT_FOUND);
+/// assert_eq!(response.headers()["content-type"], "application/problem+json");
+/// # }
+/// ```
 #[cfg(feature = "axum")]
 impl<E: Problem> axum::response::IntoResponse for Report<E> {
     /// Consumes the report and renders its declared public response.
