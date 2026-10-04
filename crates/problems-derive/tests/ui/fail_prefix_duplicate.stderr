@@ -1,0 +1,5 @@
+error: duplicate problem prefix
+ --> tests/ui/fail_prefix_duplicate.rs:3:11
+  |
+3 | #[problem(prefix = "urn:other")]
+  |           ^^^^^^

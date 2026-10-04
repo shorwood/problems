@@ -1,0 +1,5 @@
+error: problem prefix must not be empty
+ --> tests/ui/fail_prefix_empty.rs:2:20
+  |
+2 | #[problem(prefix = "")]
+  |                    ^^

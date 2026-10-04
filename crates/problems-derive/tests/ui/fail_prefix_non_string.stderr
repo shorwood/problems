@@ -1,0 +1,5 @@
+error: expected string literal
+ --> tests/ui/fail_prefix_non_string.rs:2:20
+  |
+2 | #[problem(prefix = 409)]
+  |                    ^^^

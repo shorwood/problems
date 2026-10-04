@@ -1,0 +1,5 @@
+error: expected string literal
+ --> tests/ui/fail_type_uri_non_string.rs:5:26
+  |
+5 |     #[problem(type_uri = 409)]
+  |                          ^^^

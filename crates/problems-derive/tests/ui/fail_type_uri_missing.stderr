@@ -1,0 +1,5 @@
+error: missing problem attribute `type_uri`
+ --> tests/ui/fail_type_uri_missing.rs:4:5
+  |
+4 |     #[error("failure")]
+  |     ^
