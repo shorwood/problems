@@ -18,11 +18,15 @@ enum CreateProblem {
 use poem::{Route, Server, handler, listener::TcpListener};
 
 #[handler]
-fn problem() -> Report<CreateProblem> {
-    CreateProblem::NameConflict {
+fn problem() -> Result<(), Report<CreateProblem>> {
+    create()
+}
+
+fn create() -> Result<(), Report<CreateProblem>> {
+    Err(CreateProblem::NameConflict {
         name: "example".into(),
     }
-    .into_report()
+    .into_report())
 }
 
 fn app() -> Route {
@@ -44,8 +48,8 @@ mod tests {
     #[tokio::test]
     async fn problem_response() -> Result<(), Box<dyn std::error::Error>> {
         let response = app()
-            .call(Request::builder().uri_str("/problem").finish())
-            .await?;
+            .get_response(Request::builder().uri_str("/problem").finish())
+            .await;
         assert_eq!(response.status(), 409);
         assert_eq!(
             response.headers()["content-type"],
@@ -59,5 +63,56 @@ mod tests {
         assert_eq!(body["detail"], "The name 'example' is already in use.");
         assert_eq!(body.as_object().map(|body| body.len()), Some(4));
         Ok(())
+    }
+
+    #[handler]
+    fn question_mark() -> poem::Result<()> {
+        create()?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn question_mark_conversion() {
+        let response = question_mark.get_response(Request::default()).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/problem+json"
+        );
+        let body: serde_json::Value = response.into_body().into_json().await.unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "type": "urn:example:name-conflict",
+                "title": "Name conflict",
+                "status": 409,
+                "detail": "The name 'example' is already in use."
+            })
+        );
+    }
+
+    #[handler]
+    fn direct() -> Report<CreateProblem> {
+        create().unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn direct_report_response() {
+        let response = direct.get_response(Request::default()).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/problem+json"
+        );
+        let body: serde_json::Value = response.into_body().into_json().await.unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "type": "urn:example:name-conflict",
+                "title": "Name conflict",
+                "status": 409,
+                "detail": "The name 'example' is already in use."
+            })
+        );
     }
 }

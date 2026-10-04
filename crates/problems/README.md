@@ -110,7 +110,7 @@ support is unconditional; the core does not depend on a JSON, YAML, or XML encod
 | `axum` | `IntoResponse` for `Report<E>`; enables JSON encoding |
 | `actix-web` | `ResponseError` and diagnostic `Display` forwarding for `Report<E>` |
 | `rocket` | `Responder` for `Report<E>` |
-| `poem` | `IntoResponse` for `Report<E>` when `E: Send` |
+| `poem` | `IntoResponse` and conversion to `poem::Error` for `Report<E>` when `E: Send` |
 | `salvo` | `Scribe` for `Report<E>` |
 | `warp` | `Reply` for `Report<E>` when `E: Send` |
 | `aide` | Declared status documentation; enables `axum` |
@@ -153,6 +153,13 @@ fn response_example() {
 The response uses `application/problem+json` and mirrors the HTTP status in its
 numeric `status` member. Optional detail and instance are omitted when absent.
 The public body contains neither `Display` text nor the internal source chain.
+
+Poem handlers can return `Result<T, Report<E>>` when `T: poem::IntoResponse` and
+`E: Problem + Send + Sync + 'static`. Poem imposes these error-branch bounds;
+conversion to `poem::Error` itself needs only `E: Problem + Send`.
+A `poem::Result<T>` handler can use `?` on a report-returning operation.
+The conversion consumes the original error and retains its public response;
+inspect or report diagnostics before converting.
 
 Aide's `OperationOutput` implementation for `Report<E>` reads the static
 declarations. It groups variants by status and lists each title and identity in

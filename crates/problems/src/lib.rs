@@ -364,6 +364,15 @@ impl<E: Problem + Send> poem::IntoResponse for Report<E> {
     }
 }
 
+#[cfg(feature = "poem")]
+impl<E: Problem + Send> From<Report<E>> for poem::Error {
+    /// Consumes the diagnostic error and retains only its public response.
+    /// Inspect or report diagnostics before converting.
+    fn from(report: Report<E>) -> Self {
+        Self::from_response(poem::IntoResponse::into_response(report))
+    }
+}
+
 /****************************************/
 /* Salvo Response                       */
 /****************************************/
