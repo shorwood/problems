@@ -165,7 +165,7 @@ fn derived_problem_accepts_occurrence_context() {
     assert_instance(serde_json::to_value(details).unwrap());
 }
 
-#[cfg(feature = "aide")]
+#[cfg(feature = "schemars")]
 #[test]
 fn instance_remains_optional_in_schema() {
     let schema = schemars::schema_for!(problems::ProblemDetails);

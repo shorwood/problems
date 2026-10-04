@@ -4,7 +4,8 @@
 //! the declared public metadata and can be serialized with any Serde encoder.
 //! The default `derive` feature supports enum declarations. Optional `axum`,
 //! `actix-web`, `rocket`, `poem`, `salvo`, and `warp` features provide JSON HTTP
-//! responses. `aide` provides OpenAPI schemas and declared response statuses.
+//! responses. `schemars` provides document schemas; `aide` adds declared OpenAPI
+//! response statuses.
 
 extern crate self as problems;
 
@@ -134,7 +135,7 @@ pub trait Problem: Error {
 /// public members, including the occurrence URI.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct ProblemDetails {
     /// URI reference identifying the problem type.
     ///
@@ -153,7 +154,7 @@ pub struct ProblemDetails {
     ///
     /// This value is advisory; intermediaries may change the HTTP response status.
     #[serde(serialize_with = "serialize_status")]
-    #[cfg_attr(feature = "aide", schemars(with = "u16"))]
+    #[cfg_attr(feature = "schemars", schemars(with = "u16"))]
     status: StatusCode,
 
     /// Human-readable explanation specific to this occurrence.
@@ -239,6 +240,7 @@ impl<E: Problem> From<&Report<E>> for ProblemDetails {
 /// does not implement `Problem` or framework response traits.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct GenericProblem {
     /// URI reference identifying the received problem type.
     ///
@@ -255,6 +257,10 @@ pub struct GenericProblem {
     ///
     /// Absent when unavailable. The actual HTTP response status remains separate.
     #[serde(default, deserialize_with = "deserialize_status")]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<u16>", range(min = 100, max = 999))
+    )]
     status: Option<StatusCode>,
 
     /// Human-readable explanation specific to this occurrence.

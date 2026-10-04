@@ -88,7 +88,7 @@ fn typed_status_preserves_custom_numeric_projection() {
     );
 }
 
-#[cfg(feature = "aide")]
+#[cfg(feature = "schemars")]
 #[test]
 fn typed_status_keeps_numeric_required_schema() {
     let schema = serde_json::to_value(schemars::schema_for!(problems::ProblemDetails)).unwrap();

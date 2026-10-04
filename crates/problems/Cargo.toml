@@ -14,7 +14,8 @@ rocket = ["dep:rocket"]
 poem = ["dep:poem", "dep:tokio"]
 salvo = ["dep:salvo"]
 warp = ["dep:warp"]
-aide = ["axum", "dep:aide", "dep:schemars"]
+schemars = ["dep:schemars"]
+aide = ["axum", "dep:aide", "schemars"]
 
 [dependencies]
 tokio = { workspace = true, optional = true, features = ["net"] }

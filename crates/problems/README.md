@@ -257,7 +257,14 @@ support is unconditional; the core does not depend on a JSON, YAML, or XML encod
 | `poem` | `IntoResponse` and conversion to `poem::Error` for `Report<E>` when `E: Send` |
 | `salvo` | `Scribe` for `Report<E>` |
 | `warp` | `Reply` for `Report<E>` when `E: Send` |
-| `aide` | Declared status documentation; enables `axum` |
+| `schemars` | `JsonSchema` for producer and receiving documents |
+| `aide` | Declared status documentation; enables `axum` and `schemars` |
+
+Enable `schemars` to generate schemas for `ProblemDetails` and `GenericProblem`
+without an HTTP framework. Producer schemas require type, title, and status;
+receiving schemas reflect missing members and the `about:blank` default.
+`Report<E>` uses its projected document through Aide; declaration metadata and
+private diagnostic errors are not response schemas.
 
 Pass `report.details()` to the serializer you choose, such as a YAML encoder.
 The built-in HTTP integrations emit JSON. RFC XML mapping is outside this library.

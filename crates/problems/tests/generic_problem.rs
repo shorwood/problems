@@ -145,3 +145,23 @@ fn matches_variant_definition_without_constructing_error() {
     assert!(document.is_type(&Local::NAME_CONFLICT));
     assert!(!document.is_type(&Local::MISSING));
 }
+
+#[cfg(feature = "schemars")]
+#[test]
+fn receiving_schema_preserves_defaults_and_optional_members() {
+    let schema = serde_json::to_value(schemars::schema_for!(GenericProblem)).unwrap();
+    let properties = schema["properties"].as_object().unwrap();
+    assert_eq!(properties.len(), 5);
+    assert_eq!(properties["type"]["type"], "string");
+    assert_eq!(properties["type"]["default"], "about:blank");
+    assert!(
+        schema
+            .get("required")
+            .is_none_or(|required| required.as_array().unwrap().is_empty())
+    );
+    let status = &properties["status"];
+    assert_eq!(status["type"], serde_json::json!(["integer", "null"]));
+    assert_eq!(status["minimum"], 100);
+    assert_eq!(status["maximum"], 999);
+    assert_ne!(schema["additionalProperties"], false);
+}
