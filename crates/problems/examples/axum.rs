@@ -103,6 +103,44 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
+    async fn header_only_composition_preserves_status() -> Result<(), Box<dyn std::error::Error>> {
+        let report = CreateProblem::NameConflict {
+            name: "example".into(),
+        }
+        .into_report();
+        let response = ([("x-request-id", "example")], report).into_response();
+        assert_eq!(response.status(), 409);
+        assert_eq!(response.headers()["x-request-id"], "example");
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/problem+json"
+        );
+        let body = to_bytes(response.into_body(), 4096).await?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body)?["status"],
+            409
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn outer_status_override_leaves_document_unchanged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let report = CreateProblem::NameConflict {
+            name: "example".into(),
+        }
+        .into_report();
+        let response = (axum::http::StatusCode::UNAUTHORIZED, report).into_response();
+        assert_eq!(response.status(), 401);
+        let body = to_bytes(response.into_body(), 4096).await?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body)?["status"],
+            409
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn default_json_rejection_is_plain_text() -> Result<(), Box<dyn std::error::Error>> {
         let response = app()
             .oneshot(

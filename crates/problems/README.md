@@ -238,6 +238,44 @@ The response uses `application/problem+json` and mirrors the HTTP status in its
 numeric `status` member. Optional detail and instance are omitted when absent.
 The public body contains neither `Display` text nor the internal source chain.
 
+The origin server must send the same HTTP status as the document's `status`
+member ([RFC 9457, section 3.1.2](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.2)).
+The adapters use the problem definition for both. If the application's
+classification changes, choose a problem with the appropriate declared status.
+
+In Axum, add headers without supplying an outer status:
+
+```rust
+# fn main() {
+# #[cfg(feature = "axum")]
+# {
+use axum::response::IntoResponse;
+use problems::IntoReport;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum AppProblem {
+    #[error("private storage diagnostic")]
+    #[problem(503)]
+    Unavailable,
+}
+
+let report = AppProblem::Unavailable.into_report();
+let response = ([("retry-after", "60")], report).into_response();
+assert_eq!(response.status().as_u16(), 503);
+assert_eq!(response.headers()["retry-after"], "60");
+# }
+# }
+```
+
+An outer `(StatusCode::UNAUTHORIZED, report)` instead replaces the HTTP status
+with 401 while leaving the document's declared status unchanged. Subsequent
+middleware can also cause a mismatch. The report adapter cannot enforce
+consistency after its response has been composed or modified. RFC 9457 separately
+allows for intermediaries to change the transmitted status; that does not excuse
+an origin application from generating matching values.
+See [Axum response composition](https://docs.rs/axum/latest/axum/response/index.html).
+
 Axum, Rocket, Poem, Salvo, and Warp accept borrowed reports as well as owned
 reports. Borrowed rendering produces an owned public response and leaves the
 original report available for diagnostic inspection, without requiring `Clone`.
