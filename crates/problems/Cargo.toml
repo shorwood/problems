@@ -11,12 +11,13 @@ derive = ["dep:problems-derive"]
 axum = ["dep:axum"]
 actix-web = ["dep:actix-web"]
 rocket = ["dep:rocket"]
-poem = ["dep:poem"]
+poem = ["dep:poem", "dep:tokio"]
 salvo = ["dep:salvo"]
 warp = ["dep:warp"]
 aide = ["axum", "dep:aide", "dep:schemars"]
 
 [dependencies]
+tokio = { workspace = true, optional = true, features = ["net"] }
 http = { workspace = true }
 problems-derive = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
