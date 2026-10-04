@@ -668,6 +668,65 @@ declared variants. Aide reads all wrapped definitions without constructing error
 Manual implementations should return a slice's `.iter()` or chain other problem
 iterators; callers that need indexing can collect the references into a `Vec`.
 
+### Borrowed problems and diagnostic erasure
+
+Use a concrete problem type, or an aggregate enum, for handler return values.
+Aide obtains every possible declaration from that type's `definitions()` iterator.
+Borrowed trait objects can inspect the current error without changing ownership:
+
+```rust
+use problems::{IntoReport, Problem};
+use std::error::Error;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[error("storage operation failed")]
+#[problem(type_uri = "urn:example:storage", status = 503,
+          detail = "Unable to save the resource.")]
+struct StorageFailure {
+    source: std::io::Error,
+}
+
+let report = StorageFailure {
+    source: std::io::Error::other("private diagnostic"),
+}
+.into_report();
+
+let borrowed: &dyn Problem = report.problem();
+assert_eq!(borrowed.definition(), &StorageFailure::DEFINITION);
+assert_eq!(borrowed.detail().as_deref(), Some("Unable to save the resource."));
+
+// Project public metadata before erasing the diagnostic error's type.
+let document = report.details();
+let diagnostic: Box<dyn Error + Send + Sync> = Box::new(report.into_problem());
+assert!(diagnostic.source().unwrap().is::<std::io::Error>());
+assert_eq!(document.status(), 503);
+```
+
+`definition()` describes one error value. `definitions()` describes every public
+problem the concrete type can produce. It requires `Self: Sized` and cannot be
+called through `dyn Problem`, consistent with Rust's
+[dyn compatibility rules](https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility).
+A `Box<dyn Problem>` can hold different concrete types on different calls; it
+supplies no static registry of those types. The library therefore does not
+implement `Problem` for that box or support `boxed.into_report()`. An empty list
+or the current value's definition would omit possible responses from OpenAPI.
+
+After projection, an application may move the underlying error into
+`Box<dyn Error + Send + Sync>` for diagnostic storage. The box retains its error
+message and source chain, but its trait interface exposes neither public problem
+metadata nor Miette's diagnostic help, labels, and codes. Use a Miette report when
+you need that richer diagnostic interface, as shown below. Erasing to a formatted
+string also discards the source chain and typed downcasting. Perform any typed
+inspection before erasure, or downcast to a known error type afterward.
+
+`into_problem()` discards attached report context; keep the projected document
+when that context matters. The document is public data and does not retain the
+original error. `GenericProblem` likewise carries public document data; it does
+not implement `Problem`, framework response traits, or Aide operation traits.
+Supporting heterogeneous erased handler errors would need a separate explicit
+registry and response contract. The aggregate enum above supplies the complete
+static declarations with the existing API.
+
 ### Warp rejection recovery
 
 Warp applications can wrap a report in an application-owned rejection and
