@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail_status_wrong_type.rs:5:74
+  |
+5 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = STATUS)]
+  |                                                                          ^^^^^^ expected `StatusCode`, found `u16`

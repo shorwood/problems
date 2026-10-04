@@ -1,11 +1,11 @@
 use heck::ToKebabCase;
 use proc_macro2::Span;
 use std::collections::BTreeSet;
-use syn::{Attribute, Ident, LitStr, Path, ext::IdentExt};
+use syn::{Attribute, ExprPath, Ident, LitStr, ext::IdentExt};
 
 pub(crate) struct Declaration {
     pub(crate) type_uri: LitStr,
-    pub(crate) status: Option<Path>,
+    pub(crate) status: Option<ExprPath>,
     pub(crate) title: LitStr,
     pub(crate) detail: Option<LitStr>,
 }
@@ -53,7 +53,7 @@ pub(crate) fn declaration(
             }
             match key.as_str() {
                 "type_uri" => type_uri = Some(meta.value()?.parse::<LitStr>()?),
-                "status" => status = Some(meta.value()?.parse::<Path>()?),
+                "status" => status = Some(meta.value()?.parse::<ExprPath>()?),
                 "title" => title = Some(meta.value()?.parse::<LitStr>()?),
                 "detail" => detail = Some(meta.value()?.parse::<LitStr>()?),
                 _ => return Err(meta.error("expected type_uri, status, title, or detail")),

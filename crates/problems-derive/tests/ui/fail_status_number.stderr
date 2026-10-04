@@ -1,0 +1,5 @@
+error: expected identifier
+ --> tests/ui/fail_status_number.rs:4:74
+  |
+4 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = 409)]
+  |                                                                          ^^^

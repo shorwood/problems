@@ -19,7 +19,8 @@ mod runtime_path;
 /// A colon separates prefix and name unless the prefix ends in `:` or `/`.
 /// Renaming a variant changes its generated URI; use an explicit URI to preserve
 /// an existing public identity. Duplicate type URIs are rejected. Optional `status`
-/// accepts a constant path and defaults to 500. Optional `detail` supports Rust
+/// accepts a constant path, including `<Type as Trait>::STATUS`, and defaults
+/// to 500. Optional `detail` supports Rust
 /// named-field formatting. Other fields remain diagnostic.
 #[proc_macro_derive(Problem, attributes(problem))]
 pub fn derive_problem(input: TokenStream) -> TokenStream {

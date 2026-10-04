@@ -1,0 +1,5 @@
+error: expected `,`
+ --> tests/ui/fail_status_call.rs:7:80
+  |
+7 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = status())]
+  |                                                                                ^
