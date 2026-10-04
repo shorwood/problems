@@ -1,0 +1,5 @@
+error: unknown detail field `r#type`
+ --> tests/ui/fail_raw_explicit.rs:4:74
+  |
+4 |     #[problem(type_uri = "urn:test:invalid", title = "Invalid", detail = "{r#type}")]
+  |                                                                          ^^^^^^^^^^

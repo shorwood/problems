@@ -1,0 +1,5 @@
+error: expected string literal
+ --> tests/ui/fail_title_expression.rs:4:54
+  |
+4 |     #[problem(type_uri = "urn:test:invalid", title = concat!("Invalid", " value"))]
+  |                                                      ^^^^^^

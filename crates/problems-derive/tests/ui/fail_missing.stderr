@@ -1,0 +1,5 @@
+error: unknown detail field `missing`
+ --> tests/ui/fail_missing.rs:4:74
+  |
+4 |     #[problem(type_uri = "urn:test:invalid", title = "Invalid", detail = "{missing}")]
+  |                                                                          ^^^^^^^^^^^

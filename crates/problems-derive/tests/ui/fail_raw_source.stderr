@@ -1,0 +1,5 @@
+error: diagnostic sources cannot be formatted into public detail
+ --> tests/ui/fail_raw_source.rs:7:18
+  |
+7 |         detail = "Reason: {source}"
+  |                  ^^^^^^^^^^^^^^^^^^
