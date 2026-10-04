@@ -1,0 +1,5 @@
+error: transparent cannot be combined with other problem attributes
+ --> tests/ui/fail_transparent_metadata.rs:4:5
+  |
+4 |     #[problem(transparent, status = 409)]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -12,6 +12,33 @@ pub(crate) struct Declaration {
 
 const STATUS_MESSAGE: &str = "status requires an integer literal from 100 through 999, such as status = 409; omit status to use 500";
 
+pub(crate) fn transparent(attributes: &[Attribute]) -> syn::Result<bool> {
+    let attributes: Vec<_> = attributes
+        .iter()
+        .filter(|attribute| attribute.path().is_ident("problem"))
+        .collect();
+    for attribute in &attributes {
+        let Ok(items) = attribute.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        ) else {
+            continue;
+        };
+        if items.iter().any(|item| item.path().is_ident("transparent")) {
+            if attributes.len() != 1
+                || items.len() != 1
+                || !matches!(items.first(), Some(syn::Meta::Path(_)))
+            {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "transparent cannot be combined with other problem attributes",
+                ));
+            }
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn status_number(expression: Expr) -> syn::Result<u16> {
     let message = STATUS_MESSAGE;
     let Expr::Lit(literal) = expression else {

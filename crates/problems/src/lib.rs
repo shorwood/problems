@@ -65,7 +65,11 @@ pub struct ProblemDefinition {
 /// variant `type_uri` declarations override it; without a prefix they are required.
 /// Prefixes ending in `:` or `/` are used directly; otherwise a colon is appended.
 /// Generated URIs change when variants are renamed. Keep an explicit URI when
-/// renaming a variant must preserve its public identity. Duplicate URIs are rejected.
+/// renaming a variant must preserve its public identity. Duplicate locally declared
+/// URIs are rejected; delegated lists are chained as provided by their types.
+/// Single-field tuple variants marked `#[problem(transparent)]` delegate their
+/// definition, detail, and instance to the wrapped `Problem`. Their definitions
+/// are chained into the enclosing enum's iterator in variant order.
 ///
 /// The derive leaves `Display` and `Error` to your error implementation.
 /// For example, declare a conflict and include its name in the public explanation:
@@ -100,7 +104,9 @@ pub trait Problem: Error {
     /// Lists all definitions exposed by this error type without constructing values.
     /// Every definition returned by `definition()` must appear in this list so
     /// OpenAPI generation describes every possible response.
-    fn definitions() -> &'static [ProblemDefinition]
+    /// Returns an iterator of static references so composed problems can chain
+    /// definition lists without allocating or constructing error values.
+    fn definitions() -> impl Iterator<Item = &'static ProblemDefinition>
     where
         Self: Sized;
 
@@ -237,15 +243,19 @@ impl<E: Problem> Report<E> {
     ///
     /// impl Problem for Conflict {
     ///     fn definition(&self) -> &'static ProblemDefinition {
-    ///         &Self::definitions()[0]
-    ///     }
-    ///
-    ///     fn definitions() -> &'static [ProblemDefinition] {
-    ///         &[ProblemDefinition {
+    ///         &ProblemDefinition {
     ///             type_uri: "urn:example:conflict",
     ///             title: "Conflict",
     ///             status: StatusCode::CONFLICT,
-    ///         }]
+    ///         }
+    ///     }
+    ///
+    ///     fn definitions() -> impl Iterator<Item = &'static ProblemDefinition> {
+    ///         [ProblemDefinition {
+    ///             type_uri: "urn:example:conflict",
+    ///             title: "Conflict",
+    ///             status: StatusCode::CONFLICT,
+    ///         }].iter()
     ///     }
     /// }
     ///

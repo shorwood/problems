@@ -249,6 +249,69 @@ the Axum response bound alone does not expose OpenAPI metadata.
 
 ## Framework examples
 
+### Combining problem enums
+
+A handler can combine existing problem enums through a boundary enum. Mark
+single-field tuple variants with `#[problem(transparent)]` to forward public
+metadata, detail, and instance without repeating their declarations:
+
+```rust
+use problems::{IntoReport, Problem, Report};
+
+#[derive(Debug, thiserror::Error, Problem)]
+#[problem(prefix = "urn:auth")]
+enum AuthProblem {
+    #[error("private authentication diagnostic")]
+    #[problem(401)]
+    Unauthorized,
+}
+
+#[derive(Debug, thiserror::Error, Problem)]
+#[problem(prefix = "urn:storage")]
+enum StorageProblem {
+    #[error("private storage diagnostic")]
+    #[problem(503)]
+    Unavailable,
+}
+
+#[derive(Debug, thiserror::Error, Problem)]
+enum HandlerProblem {
+    #[error(transparent)]
+    #[problem(transparent)]
+    Auth(#[from] AuthProblem),
+    #[error(transparent)]
+    #[problem(transparent)]
+    Storage(#[from] StorageProblem),
+}
+
+fn authenticate() -> Result<(), AuthProblem> { Ok(()) }
+fn store() -> Result<(), StorageProblem> { Ok(()) }
+
+fn operation() -> Result<(), HandlerProblem> {
+    authenticate()?;
+    store()?;
+    Ok(())
+}
+
+async fn handler() -> Result<(), Report<HandlerProblem>> {
+    operation().map_err(IntoReport::into_report)
+}
+
+assert_eq!(HandlerProblem::definitions().map(|d| d.status.as_u16())
+    .collect::<Vec<_>>(), [401, 503]);
+```
+
+`#[error(transparent)]` controls diagnostic forwarding; `#[problem(transparent)]`
+controls public problem forwarding. Transparent variants cannot also declare
+status, title, type URI, or detail. An enclosing prefix only affects locally
+declared variants. Aide reads all wrapped definitions without constructing errors.
+
+`Problem::definitions()` now returns an iterator of static definition references.
+Manual implementations should return a slice's `.iter()` or chain other problem
+iterators; callers that need indexing can collect the references into a `Vec`.
+
+### Running examples
+
 Each example serves `GET /problem` at `127.0.0.1:3000` and returns a conflict
 with formatted public detail. Run one server at a time:
 

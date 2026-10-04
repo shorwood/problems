@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use syn::{Data, DeriveInput, Fields, Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::{
-    declaration::{Declaration, declaration, prefix},
+    declaration::{Declaration, declaration, prefix, transparent},
     detail::detail_fields,
     fields::is_source,
     runtime_path::runtime_path,
@@ -25,16 +25,54 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
     let prefix = prefix(&input.attrs)?;
     let mut type_uris = BTreeSet::new();
     let name = &input.ident;
-    let mut definitions = Vec::new();
     let mut definition_arms = Vec::new();
     let mut detail_arms = Vec::new();
+    let mut instance_arms = Vec::new();
+    let mut definition_iter = quote!(::std::iter::empty::<&'static #runtime::ProblemDefinition>());
     let mut generics = input.generics.clone();
     generics
         .make_where_clause()
         .predicates
         .push(syn::parse_quote!(Self: ::std::error::Error));
 
-    for (index, variant) in data.variants.iter().enumerate() {
+    for variant in &data.variants {
+        for field in &variant.fields {
+            if let Some(attribute) = field.attrs.iter().find(|a| a.path().is_ident("problem")) {
+                return Err(syn::Error::new(
+                    attribute.span(),
+                    "problem attributes belong on variants, not fields",
+                ));
+            }
+        }
+        let variant_name = &variant.ident;
+        if transparent(&variant.attrs)? {
+            let Fields::Unnamed(fields) = &variant.fields else {
+                return Err(syn::Error::new(
+                    variant.span(),
+                    "transparent requires a single-field tuple variant",
+                ));
+            };
+            if fields.unnamed.len() != 1 {
+                return Err(syn::Error::new(
+                    variant.span(),
+                    "transparent requires a single-field tuple variant",
+                ));
+            }
+            let ty = &fields.unnamed[0].ty;
+            generics
+                .make_where_clause()
+                .predicates
+                .push(syn::parse_quote!(#ty: #runtime::Problem));
+            definition_arms.push(
+                quote!(Self::#variant_name(problem) => #runtime::Problem::definition(problem)),
+            );
+            detail_arms
+                .push(quote!(Self::#variant_name(problem) => #runtime::Problem::detail(problem)));
+            instance_arms
+                .push(quote!(Self::#variant_name(problem) => #runtime::Problem::instance(problem)));
+            definition_iter = quote!(::std::iter::Iterator::chain(#definition_iter, <#ty as #runtime::Problem>::definitions()));
+            continue;
+        }
         if matches!(variant.fields, Fields::Unnamed(_)) {
             return Err(syn::Error::new(
                 variant.span(),
@@ -53,7 +91,6 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
                 "duplicate problem type URI; set a distinct type_uri explicitly",
             ));
         }
-        let variant_name = &variant.ident;
         let pattern = match variant.fields {
             Fields::Unit => quote!(Self::#variant_name),
             _ => quote!(Self::#variant_name { .. }),
@@ -73,22 +110,15 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
                 }
             }),
         );
-        definitions.push(quote!(#runtime::ProblemDefinition {
+        let definition = quote!(#runtime::ProblemDefinition {
             type_uri: #type_uri,
             status: #status,
             title: #title,
-        }));
-        definition_arms
-            .push(quote!(#pattern => &<Self as #runtime::Problem>::definitions()[#index]));
-
-        for field in &variant.fields {
-            if let Some(attribute) = field.attrs.iter().find(|a| a.path().is_ident("problem")) {
-                return Err(syn::Error::new(
-                    attribute.span(),
-                    "problem attributes belong on variants, not fields",
-                ));
-            }
-        }
+        });
+        definition_arms.push(quote!(#pattern => &#definition));
+        instance_arms.push(quote!(#pattern => ::std::option::Option::None));
+        definition_iter =
+            quote!(::std::iter::Iterator::chain(#definition_iter, ::std::iter::once(&#definition)));
 
         if let Some(detail) = detail {
             let fields = detail_fields(&detail)?;
@@ -147,11 +177,14 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             fn definition(&self) -> &'static #runtime::ProblemDefinition {
                 match #instance { #(#definition_arms),* }
             }
-            fn definitions() -> &'static [#runtime::ProblemDefinition] {
-                &[#(#definitions),*]
+            fn definitions() -> impl ::std::iter::Iterator<Item = &'static #runtime::ProblemDefinition> {
+                #definition_iter
             }
             fn detail(&self) -> ::std::option::Option<::std::string::String> {
                 match #instance { #(#detail_arms),* }
+            }
+            fn instance(&self) -> ::std::option::Option<::std::string::String> {
+                match #instance { #(#instance_arms),* }
             }
         }
     })

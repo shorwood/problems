@@ -21,18 +21,18 @@ enum Conditional {
     Second { value: String },
 }
 fn main() {
-    let definitions = Conditional::definitions();
+    let definitions = Conditional::definitions().collect::<Vec<_>>();
     assert_eq!(definitions.len(), 2);
     assert!(std::ptr::eq(
         Conditional::First.definition(),
-        &definitions[0]
+        definitions[0]
     ));
     assert_eq!(definitions[0].status, issues::StatusCode::NOT_FOUND);
     assert_eq!(Conditional::First.detail(), None);
     let second = Conditional::Second {
         value: "public".into(),
     };
-    assert!(std::ptr::eq(second.definition(), &definitions[1]));
+    assert!(std::ptr::eq(second.definition(), definitions[1]));
     assert_eq!(definitions[1].type_uri, "urn:test:second");
     assert_eq!(
         definitions[1].status,

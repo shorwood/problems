@@ -7,5 +7,5 @@ enum Disabled {
     Removed,
 }
 fn main() {
-    assert!(Disabled::definitions().is_empty());
+    assert!(Disabled::definitions().next().is_none());
 }

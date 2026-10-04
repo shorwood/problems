@@ -1,0 +1,5 @@
+error: transparent requires a single-field tuple variant
+ --> tests/ui/fail_transparent_named.rs:3:5
+  |
+3 |     #[error("invalid")]
+  |     ^
