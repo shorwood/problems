@@ -1,5 +1,5 @@
-error: expected `,`
- --> tests/ui/fail_status_arithmetic.rs:5:81
+error: status requires a constant path, such as problems::StatusCode::CONFLICT or <Type as Trait>::STATUS; omit status to use 500
+ --> tests/ui/fail_status_arithmetic.rs:5:74
   |
 5 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = STATUS + STATUS)]
-  |                                                                                 ^
+  |                                                                          ^^^^^^^^^^^^^^^

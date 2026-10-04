@@ -1,7 +1,7 @@
 use heck::ToKebabCase;
 use proc_macro2::Span;
 use std::collections::BTreeSet;
-use syn::{Attribute, ExprPath, Ident, LitStr, ext::IdentExt};
+use syn::{Attribute, Expr, ExprPath, Ident, LitStr, ext::IdentExt};
 
 pub(crate) struct Declaration {
     pub(crate) type_uri: LitStr,
@@ -53,7 +53,19 @@ pub(crate) fn declaration(
             }
             match key.as_str() {
                 "type_uri" => type_uri = Some(meta.value()?.parse::<LitStr>()?),
-                "status" => status = Some(meta.value()?.parse::<ExprPath>()?),
+                "status" => {
+                    let message = "status requires a constant path, such as problems::StatusCode::CONFLICT or <Type as Trait>::STATUS; omit status to use 500";
+                    let value = meta.value().map_err(|error| {
+                        syn::Error::new(error.span(), message)
+                    })?;
+                    let expression = value.parse::<Expr>().map_err(|error| {
+                        syn::Error::new(error.span(), message)
+                    })?;
+                    let Expr::Path(path) = expression else {
+                        return Err(syn::Error::new_spanned(expression, message));
+                    };
+                    status = Some(path);
+                }
                 "title" => title = Some(meta.value()?.parse::<LitStr>()?),
                 "detail" => detail = Some(meta.value()?.parse::<LitStr>()?),
                 _ => return Err(meta.error("expected type_uri, status, title, or detail")),

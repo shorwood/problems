@@ -1,0 +1,5 @@
+error: duplicate problem attribute
+ --> tests/ui/fail_status_duplicate.rs:4:104
+  |
+4 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = issues::StatusCode::CONFLICT, status = 409)]
+  |                                                                                                        ^^^^^^
