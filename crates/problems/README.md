@@ -234,6 +234,66 @@ HTTP adapters use consuming projection; borrowed adapters and Actix's
 comes from the original error. `into_problem()` recovers that error and discards
 the attached occurrence context.
 
+## URI references
+
+Callers must supply valid URI references for `type_uri`, generated type URIs,
+and `instance`. The derive checks that declared type URIs are nonempty and
+unique within an enum; it does not validate URI syntax. `with_instance`, manual
+`Problem` implementations, and receiving documents likewise preserve strings
+without syntax validation, resolution, normalization, or network requests.
+A nonempty string containing spaces can therefore compile and serialize while
+violating this caller contract.
+
+| Form | Example | Meaning |
+| --- | --- | --- |
+| Absolute HTTPS URI | `https://api.example.com/problems/storage` | Stable identity; can also locate problem documentation |
+| URN | `urn:example:problem:storage` | Absolute identity without requiring a retrievable resource |
+| Relative reference | `/problems/storage` | Identity depends on the document's base URI |
+
+[RFC 9457 recommends absolute type URIs](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.1)
+when possible. Relative references resolve against the document's base URI:
+`/problems/storage` at `https://api.example.com/orders/42` identifies
+`https://api.example.com/problems/storage`. Serving that same relative reference
+from another origin changes its resolved identity. A path-relative reference such
+as `storage` also changes identity with the base path. Choose stable type URIs;
+changing an established URI changes the public problem identity.
+
+```rust
+use problems::IntoReport;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+enum StorageProblem {
+    #[error("storage failed")]
+    #[problem(type_uri = "https://api.example.com/problems/storage")]
+    Https,
+    #[error("storage failed")]
+    #[problem(type_uri = "urn:example:problem:storage")]
+    Urn,
+    #[error("storage failed")]
+    #[problem(type_uri = "/problems/storage")]
+    Relative,
+}
+
+for (error, expected_type, instance) in [
+    (StorageProblem::Https, "https://api.example.com/problems/storage",
+     "https://api.example.com/occurrences/42"),
+    (StorageProblem::Urn, "urn:example:problem:storage", "urn:example:occurrence:42"),
+    (StorageProblem::Relative, "/problems/storage", "/occurrences/42"),
+] {
+    let document = error.into_report().with_instance(instance).into_details();
+    let json = serde_json::to_value(&document).unwrap();
+    assert_eq!(json["type"], expected_type);
+    assert_eq!(json["instance"], instance);
+}
+```
+
+The [`instance` member](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.5)
+can identify an occurrence without locating a resource; relative instances have
+the same base-resolution requirement. Applications own that resolution and any
+decision to retrieve documentation. `GenericProblem::is_type`, `matches`, and
+document equality compare stored strings; they do not resolve URI references.
+
+
 ## Receiving problem documents
 
 Use `GenericProblem` to decode owned public data from an HTTP response:

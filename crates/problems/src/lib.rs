@@ -39,6 +39,7 @@ pub use problems_derive::Problem;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProblemDefinition {
     /// RFC 9457 `type`, used by clients as the primary problem identifier.
+    /// The caller supplies a valid URI reference; syntax is not validated.
     pub type_uri: &'static str,
     /// Short summary, stable between occurrences.
     pub title: &'static str,
@@ -471,7 +472,8 @@ impl<E: Problem> Report<E> {
 
     /// Attach a URI reference identifying this occurrence.
     /// Overrides the error's instance without changing the original error.
-    /// The caller is responsible for supplying a valid URI reference.
+    /// The caller supplies a valid URI reference; syntax is not validated.
+    /// Relative references require resolution against the document base URI.
     pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
         self.instance = Some(instance.into());
         self
