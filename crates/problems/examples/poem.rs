@@ -8,7 +8,7 @@ enum CreateProblem {
     #[error("private duplicate diagnostic: {name}")]
     #[problem(
         type_uri = "urn:example:name-conflict",
-        status = StatusCode::CONFLICT,
+        status = 409,
         title = "Name conflict",
         detail = "The name '{name}' is already in use."
     )]

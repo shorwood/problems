@@ -1,5 +1,0 @@
-error: status requires a constant path, such as problems::StatusCode::CONFLICT or <Type as Trait>::STATUS; omit status to use 500
- --> tests/ui/fail_status_number.rs:4:74
-  |
-4 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = 409)]
-  |                                                                          ^^^

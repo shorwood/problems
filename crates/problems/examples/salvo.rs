@@ -1,14 +1,14 @@
 //! Run with `cargo run -p problems --example salvo --features salvo`.
 //! Request `GET http://127.0.0.1:3000/problem` to see the public conflict document.
 
-use problems::{IntoReport, Report, StatusCode};
+use problems::{IntoReport, Report};
 
 #[derive(Debug, thiserror::Error, problems::Problem)]
 enum CreateProblem {
     #[error("private duplicate diagnostic: {name}")]
     #[problem(
         type_uri = "urn:example:name-conflict",
-        status = StatusCode::CONFLICT,
+        status = 409,
         title = "Name conflict",
         detail = "The name '{name}' is already in use."
     )]

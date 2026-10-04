@@ -1,11 +1,11 @@
 use heck::ToKebabCase;
 use proc_macro2::Span;
 use std::collections::BTreeSet;
-use syn::{Attribute, Expr, ExprPath, Ident, LitStr, ext::IdentExt};
+use syn::{Attribute, Expr, Ident, Lit, LitStr, ext::IdentExt};
 
 pub(crate) struct Declaration {
     pub(crate) type_uri: LitStr,
-    pub(crate) status: Option<ExprPath>,
+    pub(crate) status: Option<u16>,
     pub(crate) title: LitStr,
     pub(crate) detail: Option<LitStr>,
 }
@@ -54,17 +54,26 @@ pub(crate) fn declaration(
             match key.as_str() {
                 "type_uri" => type_uri = Some(meta.value()?.parse::<LitStr>()?),
                 "status" => {
-                    let message = "status requires a constant path, such as problems::StatusCode::CONFLICT or <Type as Trait>::STATUS; omit status to use 500";
+                    let message = "status requires an integer literal from 100 through 999, such as status = 409; omit status to use 500";
                     let value = meta.value().map_err(|error| {
                         syn::Error::new(error.span(), message)
                     })?;
                     let expression = value.parse::<Expr>().map_err(|error| {
                         syn::Error::new(error.span(), message)
                     })?;
-                    let Expr::Path(path) = expression else {
+                    let Expr::Lit(literal) = expression else {
                         return Err(syn::Error::new_spanned(expression, message));
                     };
-                    status = Some(path);
+                    let Lit::Int(integer) = literal.lit else {
+                        return Err(syn::Error::new_spanned(literal, message));
+                    };
+                    let number = integer.base10_parse::<u16>().map_err(|_| {
+                        syn::Error::new(integer.span(), message)
+                    })?;
+                    if !(100..=999).contains(&number) {
+                        return Err(syn::Error::new(integer.span(), message));
+                    }
+                    status = Some(number);
                 }
                 "title" => title = Some(meta.value()?.parse::<LitStr>()?),
                 "detail" => detail = Some(meta.value()?.parse::<LitStr>()?),

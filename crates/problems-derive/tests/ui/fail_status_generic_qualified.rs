@@ -1,4 +1,4 @@
-use issues::{IntoReport, StatusCode};
+use issues::StatusCode;
 trait Code {
     const STATUS: StatusCode;
 }
@@ -13,12 +13,4 @@ struct Client;
 impl Code for Client {
     const STATUS: StatusCode = StatusCode::BAD_REQUEST;
 }
-fn main() {
-    assert_eq!(
-        Failure::Invalid { value: Client }
-            .into_report()
-            .details()
-            .status(),
-        400
-    );
-}
+fn main() {}

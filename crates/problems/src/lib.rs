@@ -57,7 +57,7 @@ pub struct ProblemDefinition {
 /// feature, enabled by default. The derive implements `definition()` and
 /// `definitions()` from each variant's `#[problem(...)]` declaration. It also
 /// implements `detail()` when a detail format is declared, using the variant's
-/// named fields. Status accepts a constant path and defaults to
+/// named fields. Status accepts an integer literal from 100 through 999 and defaults to
 /// `StatusCode::INTERNAL_SERVER_ERROR` when omitted. `instance()` defaults to `None`.
 /// An enum prefix generates type URIs from kebab-case variant names. Explicit
 /// variant `type_uri` declarations override it; without a prefix they are required.
@@ -78,7 +78,7 @@ pub struct ProblemDefinition {
 /// enum CreateProblem {
 ///     #[error("duplicate name: {name}")]
 ///     #[problem(
-///         status = problems::StatusCode::CONFLICT,
+///         status = 409,
 ///         title = "Name conflict",
 ///         detail = "The name '{name}' is already in use."
 ///     )]

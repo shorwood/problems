@@ -6,7 +6,7 @@ enum Conditional {
     #[problem(type_uri = "urn:test:disabled", title = "Disabled")]
     Removed,
     #[error("first")]
-    #[problem(type_uri = "urn:test:first", title = "First", status = issues::StatusCode::NOT_FOUND)]
+    #[problem(type_uri = "urn:test:first", title = "First", status = 404)]
     First,
     #[cfg(any())]
     #[error("also disabled")]

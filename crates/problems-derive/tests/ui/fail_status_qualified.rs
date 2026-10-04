@@ -1,4 +1,3 @@
-use issues::Problem;
 trait Code {
     const STATUS: issues::StatusCode;
 }
@@ -12,9 +11,4 @@ enum Failure {
     #[problem(type_uri = "urn:test:failure", title = "Failure", status = <Client as Code>::STATUS)]
     Failed,
 }
-fn main() {
-    assert_eq!(
-        Failure::Failed.definition().status,
-        issues::StatusCode::CONFLICT
-    );
-}
+fn main() {}

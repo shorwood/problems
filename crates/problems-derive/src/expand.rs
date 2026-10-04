@@ -66,7 +66,12 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         } = declaration;
         let status = status.map_or_else(
             || quote!(#runtime::StatusCode::INTERNAL_SERVER_ERROR),
-            |path| quote!(#path),
+            |number| quote!(const {
+                match #runtime::StatusCode::from_u16(#number) {
+                    ::std::result::Result::Ok(status) => status,
+                    ::std::result::Result::Err(_) => panic!("status validated by Problem derive"),
+                }
+            }),
         );
         definitions.push(quote!(#runtime::ProblemDefinition {
             type_uri: #type_uri,

@@ -26,7 +26,7 @@ enum CreateFlowProblem {
     #[error("flow name already exists: {name}")]
     #[problem(
         type_uri = "urn:nanoworks:problem:flow-name-conflict",
-        status = problems::StatusCode::CONFLICT,
+        status = 409,
         title = "Flow name already exists",
         detail = "A flow named '{name}' already exists."
     )]
@@ -59,13 +59,13 @@ assert!(body.get("source").is_none());
 An enum prefix can replace repeated type URI declarations:
 
 ```rust
-use problems::{Problem, StatusCode};
+use problems::Problem;
 
 #[derive(Debug, thiserror::Error, Problem)]
 #[problem(prefix = "urn:example")]
 enum MyProblem {
     #[error("resource not found")]
-    #[problem(title = "Not Found", status = StatusCode::NOT_FOUND)]
+    #[problem(title = "Not Found", status = 404)]
     NotFound,
 }
 
@@ -95,7 +95,7 @@ into public detail. The derive supports unit and named-field enum variants.
 `Report::from(error)` and `error.into_report()` retain the same typed error.
 `ProblemDetails::from(&report)` and `Report::details` construct an owned
 public document without reporting the error. Definitions use `StatusCode`, so
-conversion is infallible. The derive accepts status constant paths, such as `StatusCode::CONFLICT`.
+conversion is infallible. The derive accepts only integer status literals from 100 through 999, such as `status = 409`. Constant paths and other expressions are rejected.
 Omitting `status` defaults to `StatusCode::INTERNAL_SERVER_ERROR` (500). The document remains usable after dropping the report.
 
 ## Features
@@ -179,7 +179,7 @@ use problems::{IntoReport, Report};
 
 #[derive(Debug, thiserror::Error, problems::Problem)]
 enum CreateFlowProblem {
-    #[problem(type_uri = "urn:nanoworks:problem:flow-name-conflict", status = problems::StatusCode::CONFLICT, title = "Flow name already exists")]
+    #[problem(type_uri = "urn:nanoworks:problem:flow-name-conflict", status = 409, title = "Flow name already exists")]
     #[error("name conflict")]
     NameConflict,
 }
@@ -208,6 +208,11 @@ conversion to `poem::Error` itself needs only `E: Problem + Send`.
 A `poem::Result<T>` handler can use `?` on a report-returning operation.
 The conversion consumes the original error and retains its public response;
 inspect or report diagnostics before converting.
+
+Declarations use numeric literals, including in Actix applications:
+`#[problem(status = 409, ...)]`. No framework status import is needed for a
+declaration. Runtime definitions retain `problems::StatusCode` (`http` 1.x);
+the Actix adapter converts it numerically to Actix's `http` 0.2 status type.
 
 Aide's `OperationOutput` implementation for `Report<E>` reads the static
 declarations. It groups variants by status and lists each title and identity in
