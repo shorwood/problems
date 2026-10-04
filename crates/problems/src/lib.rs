@@ -59,6 +59,11 @@ pub struct ProblemDefinition {
 /// implements `detail()` when a detail format is declared, using the variant's
 /// named fields. Status accepts a constant path and defaults to
 /// `StatusCode::INTERNAL_SERVER_ERROR` when omitted. `instance()` defaults to `None`.
+/// An enum prefix generates type URIs from kebab-case variant names. Explicit
+/// variant `type_uri` declarations override it; without a prefix they are required.
+/// Prefixes ending in `:` or `/` are used directly; otherwise a colon is appended.
+/// Generated URIs change when variants are renamed. Keep an explicit URI when
+/// renaming a variant must preserve its public identity. Duplicate URIs are rejected.
 ///
 /// The derive leaves `Display` and `Error` to your error implementation.
 /// For example, declare a conflict and include its name in the public explanation:
@@ -69,10 +74,10 @@ pub struct ProblemDefinition {
 /// use problems::{IntoReport, Problem, StatusCode};
 ///
 /// #[derive(Debug, thiserror::Error, problems::Problem)]
+/// #[problem(prefix = "urn:example")]
 /// enum CreateProblem {
 ///     #[error("duplicate name: {name}")]
 ///     #[problem(
-///         type_uri = "urn:example:name-conflict",
 ///         status = problems::StatusCode::CONFLICT,
 ///         title = "Name conflict",
 ///         detail = "The name '{name}' is already in use."
@@ -82,6 +87,7 @@ pub struct ProblemDefinition {
 ///
 /// let report = CreateProblem::NameConflict { name: "example".into() }.into_report();
 /// assert_eq!(report.problem().definition().status, StatusCode::CONFLICT);
+/// assert_eq!(report.problem().definition().type_uri, "urn:example:name-conflict");
 /// assert_eq!(report.problem().detail().as_deref(), Some("The name 'example' is already in use."));
 /// # }
 /// ```

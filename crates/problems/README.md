@@ -56,6 +56,32 @@ assert!(body.get("source").is_none());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+An enum prefix can replace repeated type URI declarations:
+
+```rust
+use problems::{Problem, StatusCode};
+
+#[derive(Debug, thiserror::Error, Problem)]
+#[problem(prefix = "urn:example")]
+enum MyProblem {
+    #[error("resource not found")]
+    #[problem(title = "Not Found", status = StatusCode::NOT_FOUND)]
+    NotFound,
+}
+
+assert_eq!(MyProblem::NotFound.definition().type_uri, "urn:example:not-found");
+```
+
+The macro uses `heck` to convert variant identifiers to kebab case at compile
+time. A colon is inserted unless the prefix already ends in `:` or `/`:
+`urn:example:` and `https://example.com/problems/` both work as written.
+An explicit variant `type_uri` overrides the prefix. Without a prefix, it remains
+required. Duplicate resulting URIs and empty prefixes are rejected.
+
+Renaming a variant changes its generated public problem identity. Set an explicit
+`type_uri` to preserve an established identity through a Rust rename. Titles do
+not influence URI generation. Status still defaults to 500 when omitted.
+
 Titles remain static. Detail supports named fields, Rust scalar formatting
 specifiers such as `{count:04x}`, and escaped braces (`{{` and `}}`). Positional
 arguments and nested/dynamic format parameters are outside the initial derive
