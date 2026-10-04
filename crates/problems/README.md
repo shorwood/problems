@@ -1,1207 +1,139 @@
 # Problems
 
-Declare public HTTP failures beside the operation that owns their meaning.
-Keep internal errors in their ordinary Rust source chain. Convert a typed error
-into `Report<E>` at the HTTP boundary.
-
-```toml
-problems = { path = "../problems", features = ["axum"] }
-```
-
-The runtime depends on neither SeaORM nor application initialization. It does
-not interpret database failures. The application decides whether a failure is
-a conflict, a missing resource, or an unexpected internal error.
-
-## Declare and project
-
-The `Problem` derive supplies metadata and formatted public detail. Use
-`thiserror` or handwritten implementations for ordinary Rust
-`Display` and `Error` behavior.
+Typed Rust errors with explicit public HTTP responses using
+[RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457.html).
+Declare metadata, client-facing detail, and structured data beside the error.
+Keep its diagnostic message and source chain available for logging.
+The same declaration supplies Axum responses and Aide's OpenAPI metadata.
 
 ```rust
-use problems::{IntoReport, Problem};
+use aide::axum::{ApiRouter, routing::post};
+use problems::{IntoReport, Report};
 
-#[derive(Debug, thiserror::Error, problems::Problem)]
-enum CreateFlowProblem {
-    #[error("flow name already exists: {name}")]
-    #[problem(
-        type_uri = "urn:nanoworks:problem:flow-name-conflict",
-        status = 409,
-        title = "Flow name already exists",
-        detail = "A flow named '{name}' already exists."
-    )]
-    NameConflict {
-        name: String,
-    },
-    #[error("failed to create flow")]
-    #[problem(
-        type_uri = "urn:nanoworks:problem:internal-error",
-        title = "Internal server error"
-    )]
-    Database {
-        source: std::io::Error,
-    },
-}
-
-let report = CreateFlowProblem::NameConflict {
-    name: "monthly-report".into(),
-}
-.into_report();
-
-assert_eq!(report.problem().definition().status, 409);
-let body = serde_json::to_value(report.as_details())?;
-assert!(body.get("name").is_none());
-assert_eq!(body["detail"], "A flow named 'monthly-report' already exists.");
-assert!(body.get("source").is_none());
-# let _ = CreateFlowProblem::Database { source: std::io::Error::other("private") };
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-An enum prefix can replace repeated type URI declarations:
-
-```rust
-use problems::Problem;
-
-#[derive(Debug, thiserror::Error, Problem)]
-#[problem(prefix = "urn:example")]
-enum MyProblem {
-    #[error("resource not found")]
-    #[problem(404)]
-    NotFound,
-}
-
-assert_eq!(
-    MyProblem::NotFound.definition().type_uri,
-    "urn:example:not-found"
-);
-```
-
-The derive also exposes each locally declared variant's `ProblemDefinition`
-as an associated constant in SHOUTY_SNAKE_CASE: `NameConflict` becomes
-`NAME_CONFLICT`. Instance lookup and the definition iterator reuse these constants.
-Generated names must be distinct and cannot conflict with an enum variant or an
-existing associated item. Transparent variants expose no single definition;
-refer to the wrapped enum's constants instead.
-
-The macro uses `heck` to convert variant identifiers to kebab case at compile
-time. A colon is inserted unless the prefix already ends in `:` or `/`:
-`urn:example:` and `https://example.com/problems/` both work as written.
-An explicit variant `type_uri` overrides the prefix. Without a prefix, it remains
-required. Duplicate resulting URIs and empty prefixes are rejected.
-
-Titles default to the variant name converted to Title Case by `heck`:
-`NameConflict` becomes `Name Conflict`. An explicit nonempty `title` overrides
-the default. Renaming a variant also changes its default title.
-
-`#[problem(409)]` is shorthand for `#[problem(status = 409)]`. Both forms accept
-only numeric literals from 100 through 999 and share duplicate-status checks.
-Use a separate `#[problem(...)]` attribute for an explicit `type_uri`, `title`,
-or `detail` when using shorthand. An enum prefix can supply the type URI, as above.
-
-Renaming a variant changes its generated public problem identity. Set an explicit
-`type_uri` to preserve an established identity through a Rust rename. Titles do
-not influence URI generation. Status still defaults to 500 when omitted.
-
-Titles remain static. Detail supports named fields, explicit tuple indexes
-(`{0}`), Rust scalar formatting specifiers such as `{count:04x}`, and escaped
-braces (`{{` and `}}`). Implicit arguments (`{}`) and dynamic width or precision
-are unsupported. Formatting a field into detail does not expose it as a separate member.
-
-The document contains only `type`, `title`, `status`, optional `detail`, and
-optional `instance`. Other error fields remain diagnostic. Source fields
-(named `source`, or marked `#[source]` / `#[from]` / `#[error(source)]`) cannot be formatted
-into public detail. The derive supports unit, named-field, and tuple enum variants. Tuple detail supports explicit positional fields (`{0}`, `{1:04x}`);
-public detail cannot interpolate diagnostic source fields.
-
-Ordinary tuple source variants retain thiserror's familiar conversion form:
-
-```rust
-use problems::{IntoReport, Problem};
-use std::error::Error;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum AppProblem {
-    #[error("storage failed")]
-    #[problem(detail = "Unable to save the resource.")]
-    Storage(#[from] std::io::Error),
-}
-
-let error = AppProblem::from(std::io::Error::other("private diagnostic"));
-let report = error.into_report();
-assert!(report.problem().source().is_some());
-assert_eq!(AppProblem::STORAGE.status, 500);
-assert_eq!(report.problem().definition(), &AppProblem::STORAGE);
-assert_eq!(report.as_details().detail(), Some("Unable to save the resource."));
-```
-
-Public tuple fields can use explicit indexes, while source fields stay diagnostic:
-
-```rust
-use problems::Problem;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum AppProblem {
-    #[error("storage failed for {1}")]
-    #[problem(detail = "Unable to save {1}.")]
-    Storage(#[source] std::io::Error, String),
-}
-
-let error = AppProblem::Storage(std::io::Error::other("private"), "document".into());
-assert_eq!(error.detail().as_deref(), Some("Unable to save document."));
-```
-
-These variants declare their own public identity. `#[problem(transparent)]`
-instead forwards the wrapped problem's metadata and occurrence data.
-
-A struct represents a single problem without an enum wrapper. Put metadata on
-its type and supply an explicit `type_uri`. Unit, named, and tuple structs use
-the same detail formatting and source protection rules as enum variants.
-
-```rust
-use problems::Problem;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[error("name already taken: {name}")]
-#[problem(type_uri = "urn:example:name-conflict", status = 409,
-          detail = "The name {name} is unavailable.")]
-struct NameConflict {
-    name: String,
-}
-
-let error = NameConflict { name: "alice".into() };
-assert_eq!(NameConflict::DEFINITION.title, "Name Conflict");
-assert_eq!(error.definition(), &NameConflict::DEFINITION);
-assert_eq!(NameConflict::definitions().count(), 1);
-assert_eq!(error.detail().as_deref(), Some("The name alice is unavailable."));
-```
-
-Structs expose `DEFINITION` rather than a variant constant. Enum prefixes and
-`#[problem(transparent)]` forwarding remain enum features.
-
-`Report::from(error)` and `error.into_report()` retain the same typed error.
-`Report::as_details` borrows the public payload; `Report::into_details` moves it
-into a document. Neither operation reports the error. Definitions use
-`StatusCode`, so
-conversion is infallible. The derive accepts only integer status literals from 100 through 999, such as `status = 409`. Constant paths and other expressions are rejected.
-`ProblemDetails::status()` returns `StatusCode`, preserving status comparisons
-and predicates while serialization keeps the JSON member numeric.
-Omitting `status` defaults to `StatusCode::INTERNAL_SERVER_ERROR` (500). The document remains usable after dropping the report.
-
-Select structured public values explicitly with field attributes:
-
-```rust
-use problems::{ProblemDocument, IntoReport};
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum RetryProblem {
-    #[error("retry after {seconds} seconds")]
-    #[problem(status = 429, detail = "Try again in {seconds} seconds.")]
-    Retry {
-        #[problem(data)]
-        seconds: u32,
-        #[problem(data = "request")]
-        request_id: String,
-        source: std::io::Error,
-    },
-}
-
-let report = RetryProblem::Retry {
-    seconds: 30,
-    request_id: "abc".into(),
-    source: std::io::Error::other("private"),
-}.into_report();
-
-let body = serde_json::to_value(report.as_details())?;
-assert_eq!(body["data"], serde_json::json!({"seconds": 30, "request": "abc"}));
-
-let received: ProblemDocument<RetryProblemData<u32, String>> =
-    serde_json::from_value(body)?;
-assert!(received.is_type(&RetryProblem::RETRY));
-let RetryProblemData::Retry { seconds, request_id } = received.data().unwrap();
-assert_eq!(*seconds, 30);
-assert_eq!(request_id, "abc");
-assert!(received.matches(&report.into_details()));
-# Ok::<(), serde_json::Error>(())
-```
-
-Named fields use their Rust names unless renamed. Tuple fields require an
-explicit key, such as `#[problem(data = "seconds")]`. Structs use the same
-attributes. Detail interpolation does not select a field for data. Diagnostic
-sources cannot be selected. Problems without selected fields omit `data`;
-selected `Option` fields serialize `None` as a value of `null` inside the object.
-
-The derive generates a public `<Type>Data` container with generic parameters
-for selected fields, in declaration order. Enum payloads are untagged objects;
-transparent variants delegate the wrapped payload without adding wire tags.
-Typed deserialization uses Serde's untagged matching rules, so overlapping
-variant shapes can be ambiguous. Type URI remains the problem identifier.
-
-Choose projection according to ownership:
-
-- `as_details()` borrows selected fields and requires no cloning.
-- `into_details()` moves selected fields and requires no cloning.
-
-Borrowed documents cannot outlive their reports. Moving a reference-valued field
-preserves its lifetime; it does not make the referenced value owned.
-Detail rendering and an attached instance still allocate owned strings.
-HTTP adapters immediately serialize to owned response bodies. Poem and Salvo require public projections
-to implement `Send`, matching their JSON response contracts.
-
-`ProblemDetails<D = ()>` exposes its typed payload through `data()`.
-`ProblemDocument<D = ()>` decodes received data directly into the chosen
-payload type. Use `ProblemDocument<serde_json::Value>` to retain arbitrary JSON.
-Missing or null data returns `None`; present data must deserialize as `D`.
-Document equality includes data and instance. `matches(&details)` compares with
-typed producer details and ignores instance. `is_type()` compares the URI.
-
-Manual `Problem` implementations declare `type Data = ()` and
-`type DataRef<'a> = () where Self: 'a` when no payload is supplied.
-For custom payloads, implement `data()` and `into_data()`.
-These associated types are a breaking change for manual implementations.
-
-With `schemars`, generated payloads receive conditional schema implementations.
-Aide documents `ProblemDetails<E::Data>` for every declared response status,
-sharing the payload union rather than correlating a particular URI with a
-particular data shape. Serialization and schema bounds apply to public fields,
-not sources.
-
-Attach an occurrence URI at the HTTP boundary without adding request context
-to the original error:
-
-```rust
-use problems::IntoReport;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum AppProblem {
-    #[error("private storage diagnostic")]
-    #[problem(503)]
-    Unavailable,
-}
-
-let report = AppProblem::Unavailable
-    .into_report()
-    .with_instance("urn:uuid:550e8400-e29b-41d4-a716-446655440000");
-
-let details = report.into_details();
-assert_eq!(details.detail(), None);
-assert_eq!(
-    details.instance(),
-    Some("urn:uuid:550e8400-e29b-41d4-a716-446655440000")
-);
-let body = serde_json::to_value(details)?;
-assert_eq!(body["instance"], "urn:uuid:550e8400-e29b-41d4-a716-446655440000");
-# Ok::<(), serde_json::Error>(())
-```
-
-`with_instance` owns its string and overrides `Problem::instance()` for public
-projection. Without an override, the error's instance is preserved; if neither
-supplies one, the member is omitted. The caller supplies a valid URI reference
-identifying this occurrence ([RFC 9457, section 3.1.5](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.5)).
-
-Read optional members with `ProblemDetails::detail()` and
-`ProblemDetails::instance()`. Both return `Option<&str>` borrowed from the
-document without allocation; absent members return `None`. Unlike the methods
-on the `Problem` trait, these getters do not construct owned strings.
-
-`details()` retains the report and clones an attached instance into the owned
-document. `into_details()` consumes the report and moves that string. Owned
-HTTP adapters use consuming projection; borrowed adapters and Actix's
-`error_response(&self)` use borrowing projection. Diagnostic formatting still
-comes from the original error. `into_problem()` recovers that error and discards
-the attached occurrence context.
-
-## Localization
-
-Clients can map the problem's `type` URI to localized messages in their own
-translation catalog. Keep server declarations stable and use `type` as the
-machine-readable identifier; titles and details are human-readable text, not
-translation keys. Resolve relative type references before looking up their
-identity, as described below.
-
-For example, a client receiving `urn:example:name-conflict` can display its
-localized name-conflict message regardless of the server's title. The application
-owns translations and fallback behavior for unknown problem types. Field-level
-validation codes require an explicit structured response contract, rather than
-parsing `detail` for message parameters.
-
-[RFC 9457 permits server-side title localization](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.3),
-but does not require it. This library provides no locale negotiation or translation
-API. Its static definitions describe server responses; client translations do not
-add definitions or change OpenAPI declarations.
-
-## Structured validation responses
-
-`Report` projects only `type`, `title`, `status`, optional `detail`, and optional
-`instance`. Other error fields remain diagnostic, including collections of field
-errors. Converting an error into a report does not add extension members:
-
-```rust
-use problems::IntoReport;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[error("invalid fields: {fields:?}")]
-#[problem(type_uri = "urn:example:invalid-input", status = 422,
-          detail = "Correct the invalid fields and retry.")]
-struct InvalidInput {
-    fields: Vec<String>,
-}
-
-let document = InvalidInput { fields: vec!["email".into()] }
-    .into_report()
-    .into_details();
-assert_eq!(serde_json::to_value(document).unwrap(), serde_json::json!({
-    "type": "urn:example:invalid-input",
-    "title": "Invalid Input",
-    "status": 422,
-    "detail": "Correct the invalid fields and retry."
-}));
-```
-
-When clients need field identities and validation codes, define an application
-response with that explicit contract. For example, an Axum application can return
-its own JSON body with HTTP 422:
-
-```rust
-use axum::{Json, http::StatusCode, response::IntoResponse};
-use serde::Serialize;
-
-#[derive(Serialize)]
-struct FieldError {
-    field: String,
-    code: String,
-}
-
-#[derive(Serialize)]
-struct ValidationResponse {
-    errors: Vec<FieldError>,
-}
-
-fn invalid_email() -> impl IntoResponse {
-    let body = ValidationResponse {
-        errors: vec![FieldError {
-            field: "email".into(),
-            code: "invalid_format".into(),
-        }],
-    };
-    (StatusCode::UNPROCESSABLE_ENTITY, Json(body))
-}
-
-let response = invalid_email().into_response();
-assert_eq!(response.status(), 422);
-assert_eq!(response.headers()["content-type"], "application/json");
-```
-
-The application owns this body's schema, field naming, validation codes, and
-OpenAPI declaration. It uses `application/json` and is returned independently
-of `Report`; the problem adapter does not document it automatically. Clients can
-read `errors[*].field` and `errors[*].code` without parsing human messages.
-
-[RFC 9457 permits extension members](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.2),
-but this library currently provides no extension writer, field annotation, or
-payload flattening. Adding arbitrary problem extensions requires a separate API
-design decision. The RFC also advises against
-[parsing `detail` for programmatic data](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.4).
-Use stable structured fields when clients need them; keep `detail` for people.
-
-## URI references
-
-Callers must supply valid URI references for `type_uri`, generated type URIs,
-and `instance`. The derive checks that declared type URIs are nonempty and
-unique within an enum; it does not validate URI syntax. `with_instance`, manual
-`Problem` implementations, and receiving documents likewise preserve strings
-without syntax validation, resolution, normalization, or network requests.
-A nonempty string containing spaces can therefore compile and serialize while
-violating this caller contract.
-
-| Form | Example | Meaning |
-| --- | --- | --- |
-| Absolute HTTPS URI | `https://api.example.com/problems/storage` | Stable identity; can also locate problem documentation |
-| URN | `urn:example:problem:storage` | Absolute identity without requiring a retrievable resource |
-| Relative reference | `/problems/storage` | Identity depends on the document's base URI |
-
-[RFC 9457 recommends absolute type URIs](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.1)
-when possible. Relative references resolve against the document's base URI:
-`/problems/storage` at `https://api.example.com/orders/42` identifies
-`https://api.example.com/problems/storage`. Serving that same relative reference
-from another origin changes its resolved identity. A path-relative reference such
-as `storage` also changes identity with the base path. Choose stable type URIs;
-changing an established URI changes the public problem identity.
-
-```rust
-use problems::IntoReport;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-enum StorageProblem {
-    #[error("storage failed")]
-    #[problem(type_uri = "https://api.example.com/problems/storage")]
-    Https,
-    #[error("storage failed")]
-    #[problem(type_uri = "urn:example:problem:storage")]
-    Urn,
-    #[error("storage failed")]
-    #[problem(type_uri = "/problems/storage")]
-    Relative,
-}
-
-for (error, expected_type, instance) in [
-    (StorageProblem::Https, "https://api.example.com/problems/storage",
-     "https://api.example.com/occurrences/42"),
-    (StorageProblem::Urn, "urn:example:problem:storage", "urn:example:occurrence:42"),
-    (StorageProblem::Relative, "/problems/storage", "/occurrences/42"),
-] {
-    let document = error.into_report().with_instance(instance).into_details();
-    let json = serde_json::to_value(&document).unwrap();
-    assert_eq!(json["type"], expected_type);
-    assert_eq!(json["instance"], instance);
-}
-```
-
-The [`instance` member](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.5)
-can identify an occurrence without locating a resource; relative instances have
-the same base-resolution requirement. Applications own that resolution and any
-decision to retrieve documentation. `ProblemDocument::is_type`, `matches`, and
-document equality compare stored strings; they do not resolve URI references.
-
-
-## Receiving problem documents
-
-Use `ProblemDocument` to decode owned public data from an HTTP response:
-
-```rust
-use problems::{ProblemDocument, StatusCode};
-
-let problem = {
-    let body = String::from(r#"{
-        "type": "urn:example:name-conflict",
-        "title": "Name conflict",
-        "status": 409,
-        "detail": "Choose another name.",
-        "instance": "/occurrences/123",
-        "extension": {"ignored": true}
-    }"#);
-    serde_json::from_str::<ProblemDocument>(&body)?
-};
-
-assert_eq!(problem.type_uri(), "urn:example:name-conflict");
-assert_eq!(problem.title(), Some("Name conflict"));
-assert_eq!(problem.status(), Some(StatusCode::CONFLICT));
-assert_eq!(problem.detail(), Some("Choose another name."));
-assert_eq!(problem.instance(), Some("/occurrences/123"));
-# Ok::<(), serde_json::Error>(())
-```
-
-For a known payload, choose its type once and use it with either decoder:
-
-```rust
-use problems::{IntoReport, ProblemDocument};
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[error("retry after {seconds} seconds")]
-#[problem(type_uri = "urn:example:retry", title = "Retry", status = 429)]
-struct Retry {
-    #[problem(data)]
-    seconds: u32,
-    #[problem(data)]
-    request: String,
-}
-
-let expected = Retry { seconds: 30, request: "abc".into() }
-    .into_report()
-    .into_details();
-type Received = ProblemDocument<RetryData<u32, String>>;
-
-let from_json: Received = serde_json::from_str(r#"{
-    "type": "urn:example:retry", "title": "Retry", "status": 429,
-    "data": {"seconds": 30, "request": "abc"}
-}"#)?;
-let from_xml: Received = serde_xml_rs::from_str(r#"
-    <problem xmlns="urn:ietf:rfc:7807">
-      <type>urn:example:retry</type>
-      <title>Retry</title>
-      <status>429</status>
-      <data><seconds>30</seconds><request>abc</request></data>
-    </problem>
-"#)?;
-
-assert!(from_json.matches(&expected));
-assert!(from_xml.matches(&expected));
-assert_eq!(from_json, from_xml);
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-Applications select their decoders; XML support adds no runtime dependency to
-`problems`. This example uses a struct payload. XML mappings for sequences and
-enums depend on the decoder; the derive's untagged enum payloads require a
-decoder that supports Serde's untagged representation. For arbitrary JSON, use
-`ProblemDocument<serde_json::Value>`.
-
-Compare a received type with a variant's definition without constructing its
-fields or diagnostic source:
-
-```rust
-use problems::ProblemDocument;
-
+// --- Declare diagnostics and the public contract.
 #[derive(Debug, thiserror::Error, problems::Problem)]
 #[problem(prefix = "urn:example")]
 enum CreateProblem {
-    #[error("private diagnostic: {source}")]
-    #[problem(409)]
-    NameConflict { source: std::io::Error },
-}
-
-let received: ProblemDocument = serde_json::from_str(
-    r#"{"type":"urn:example:name-conflict"}"#,
-)?;
-assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
-# Ok::<(), serde_json::Error>(())
-```
-
-`is_type` compares only the type URI. Title, status, detail, instance, and
-private diagnostics do not affect this identity check. Relative received URI
-references require resolution before comparing them with declared identities.
-
-Both document types implement `PartialEq` and `Eq` when their payloads support
-those traits. Compare a received document directly with typed producer details:
-`received.matches(&report.into_details())`.
-Equality between `ProblemDocument`s compares all public members, including
-`instance`; convert details with `ProblemDocument::from(details)` for full equality.
-For repeated failures, `matches(&details)` compares
-type, title, status, detail, and data while ignoring only `instance`.
-Missing members are not wildcards; an omitted detail differs from an empty
-string. `is_type()` remains the identity-only check.
-
-The metadata owns its strings; a borrowed payload can still depend on the
-response buffer. Missing `type` defaults to `about:blank`; other missing members return
-`None`. Unknown extensions are discarded. Decoding uses ordinary Serde type
-checks: wrongly typed members fail decoding. This intentionally does not implement
-[RFC 9457's tolerant member-processing rule](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1).
-Status is decoded as an optional `StatusCode`; invalid values fail decoding. Relative
-URI references remain unresolved; the application must use the response's base
-URI when interpreting them.
-
-`ProblemDocument::from(report.into_details())` converts a local public document:
-it owns the static type and title and moves detail, instance, and the typed payload.
-Conversion is infallible and requires neither serialization nor cloning.
-Converting `as_details()` preserves any references in its borrowed payload;
-the resulting document cannot outlive those references. Comparisons perform no
-serialization.
-This receiving type carries public data only. It has no `Problem`, `Error`,
-framework response, or Aide operation implementation, and cannot recover the
-original diagnostic error or its static definitions. Keep `Report<E>` in server
-handlers and use the actual HTTP response status when handling received errors;
-the body's status is advisory.
-
-## Features
-
-The `derive` feature is enabled by default. Set `default-features = false` to
-implement `Problem` manually without the procedural macro dependency. Serde
-support is unconditional; the core does not depend on a JSON, YAML, or XML encoder.
-
-| Feature | Capability |
-| --- | --- |
-| `derive` | `#[derive(Problem)]`, static declarations, formatted detail |
-| `axum` | `IntoResponse` for `Report<E>`; enables JSON encoding |
-| `actix-web` | `ResponseError` and diagnostic `Display` forwarding for `Report<E>` |
-| `rocket` | `Responder` for `Report<E>` |
-| `poem` | `IntoResponse` and conversion to `poem::Error` for `Report<E>` when `E: Send` |
-| `salvo` | `Scribe` for `Report<E>` |
-| `warp` | `Reply` for `Report<E>` when `E: Send` |
-| `schemars` | `JsonSchema` for producer and receiving documents |
-| `aide` | Declared status documentation; enables `axum` and `schemars` |
-
-Enable `schemars` to generate schemas for `ProblemDetails` and `ProblemDocument`
-without an HTTP framework. Producer schemas require type, title, and status;
-receiving schemas reflect missing members and the `about:blank` default.
-`Report<E>` uses its projected document through Aide; declaration metadata and
-private diagnostic errors are not response schemas.
-
-Optionality and nullability describe different things. `ProblemDetails` omits
-`detail` and `instance` when absent; when present, it emits strings. The current
-Schemars schema, including Aide's shared component, permits either strings or
-`null` for these optional members. This is a broader schema than the producer's
-actual output, not a promise that reports emit null.
-
-| Contract | Absent `detail` / `instance` | Present value |
-| --- | --- | --- |
-| Producer JSON | Member omitted | String |
-| Current producer schema | Member optional | String or null |
-| `ProblemDocument` decoding | `None` | String becomes `Some`; null becomes `None` |
-
-Wrongly typed receiving members still fail decoding. Schemars 0.9.0 retains the
-nullable member types even when generating a serialization-contract schema.
-The report adapter uses Aide's existing schema context and does not change its
-global settings. Any narrowing of the published producer schema is a separate
-compatibility decision.
-
-Pass `report.as_details()` to the serializer you choose, such as a YAML encoder.
-The built-in HTTP integrations emit JSON. RFC XML mapping is outside this library.
-
-## HTTP and documentation
-
-Keep application operations returning their typed error, then wrap it in a
-report at the handler boundary:
-
-```rust
-use problems::Report;
-use std::path::Path;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-enum AppProblem {
-    #[error("failed to read file: {cause}")]
-    #[problem(
-        type_uri = "urn:example:read-failed",
-        title = "Internal server error"
-    )]
-    ReadFailed {
-        #[from]
-        cause: std::io::Error,
+    #[error("duplicate name: {name}")]
+    #[problem(status = 409, detail = "The name '{name}' is already in use.")]
+    NameConflict {
+        #[problem(data)]
+        name: String,
     },
 }
 
-fn read_file(path: &Path) -> Result<Vec<u8>, AppProblem> {
-    Ok(std::fs::read(path)?)
+// --- Return a report when the operation fails.
+async fn create_flow() -> Result<(), Report<CreateProblem>> {
+    Err(CreateProblem::NameConflict { name: "monthly".into() }.into_report())
 }
 
-fn handler(path: &Path) -> Result<Vec<u8>, Report<AppProblem>> {
-    Ok(read_file(path)?)
-}
-
-// When the handler calls the lower-level API directly, classify its error first.
-fn direct_handler(path: &Path) -> Result<Vec<u8>, Report<AppProblem>> {
-    Ok(std::fs::read(path).map_err(AppProblem::from)?)
-}
-
-# // Reading a directory exercises a real I/O failure without creating a file.
-# for report in [handler(Path::new(".")).unwrap_err(), direct_handler(Path::new(".")).unwrap_err()] {
-#     assert!(std::error::Error::source(report.problem()).is_some());
-#     let body = serde_json::to_value(report.as_details()).unwrap();
-#     assert_eq!(body, serde_json::json!({
-#         "type": "urn:example:read-failed",
-#         "title": "Internal server error",
-#         "status": 500
-#     }));
-# }
+// --- Register the Axum handler and generate its OpenAPI responses.
+let mut api = aide::openapi::OpenApi::default();
+let app = ApiRouter::<()>::new()
+    .api_route("/flows", post(create_flow))
+    .finish_api(&mut api);
 ```
 
-For `Result`, `?` uses one `From` conversion. It does not chain
-`io::Error -> AppProblem -> Report<AppProblem>`. The operation above uses
-thiserror's `From<io::Error>` implementation; the handler uses the existing
-`From<AppProblem> for Report<AppProblem>`. The direct handler makes the first
-conversion explicit with `map_err(AppProblem::from)`.
+With the router served on `localhost:3000`:
 
-`IntoReport` is an extension trait on the original error: it adds
-`.into_report()`, which returns `Report<E>`. Framework response traits are
-implemented on that report. A return type such as `Result<T, impl IntoReport>`
-only promises conversion and does not satisfy Axum's response contract.
-
-Use a concrete report error type in handlers:
-
-```rust
-# fn main() {
-# #[cfg(feature = "axum")]
-# {
-use axum::{http::StatusCode, response::IntoResponse};
-use problems::{IntoReport, Report};
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-enum CreateFlowProblem {
-    #[problem(
-        type_uri = "urn:nanoworks:problem:flow-name-conflict",
-        status = 409,
-        title = "Flow name already exists"
-    )]
-    #[error("name conflict")]
-    NameConflict,
-}
-
-async fn create_flow() -> Result<StatusCode, Report<CreateFlowProblem>> {
-    Err(CreateFlowProblem::NameConflict.into_report())
-}
-
-// Opaque Axum responses work after explicit conversion.
-async fn opaque_create_flow() -> impl IntoResponse {
-    create_flow().await.into_response()
-}
-
-# let _router = axum::Router::<()>::new()
-#     .route("/concrete", axum::routing::get(create_flow))
-#     .route("/opaque", axum::routing::get(opaque_create_flow));
-
-fn response_example() {
-    let report = CreateFlowProblem::NameConflict.into_report();
-    let response = (&report).into_response();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-    assert_eq!(response.headers()["content-type"], "application/problem+json");
-    assert_eq!(report.problem().to_string(), "name conflict");
-}
-# response_example();
-# }
-# }
+```sh
+curl -i -X POST http://localhost:3000/flows
 ```
 
-The response uses `application/problem+json` and mirrors the HTTP status in its
-numeric `status` member. Optional detail and instance are omitted when absent.
-The public body contains neither `Display` text nor the internal source chain.
+Expected response:
 
-The origin server must send the same HTTP status as the document's `status`
-member ([RFC 9457, section 3.1.2](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.2)).
-The adapters use the problem definition for both. If the application's
-classification changes, choose a problem with the appropriate declared status.
+```http
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
 
-In Axum, add headers without supplying an outer status:
-
-```rust
-# fn main() {
-# #[cfg(feature = "axum")]
-# {
-use axum::response::IntoResponse;
-use problems::IntoReport;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum AppProblem {
-    #[error("private storage diagnostic")]
-    #[problem(503)]
-    Unavailable,
-}
-
-let report = AppProblem::Unavailable.into_report();
-let response = ([("retry-after", "60")], report).into_response();
-assert_eq!(response.status().as_u16(), 503);
-assert_eq!(response.headers()["retry-after"], "60");
-# }
-# }
-```
-
-An outer `(StatusCode::UNAUTHORIZED, report)` instead replaces the HTTP status
-with 401 while leaving the document's declared status unchanged. Subsequent
-middleware can also cause a mismatch. The report adapter cannot enforce
-consistency after its response has been composed or modified. RFC 9457 separately
-allows for intermediaries to change the transmitted status; that does not excuse
-an origin application from generating matching values.
-See [Axum response composition](https://docs.rs/axum/latest/axum/response/index.html).
-
-Axum, Rocket, Poem, Salvo, and Warp accept borrowed reports as well as owned
-reports. Borrowed rendering produces an owned public response and leaves the
-original report available for diagnostic inspection, without requiring `Clone`.
-Render the response before dropping a local report; returning a reference to a
-handler-local report is not possible. Actix's `error_response(&self)` already
-borrows its report.
-
-Poem and Warp require `E: Sync` for their borrowed response implementations,
-compared with `E: Send` for owned reports. Salvo's borrowed `Scribe` itself adds
-no bound, but its async `Writer` integration requires `E: Sync`.
-
-Poem handlers can return `Result<T, Report<E>>` when `T: poem::IntoResponse` and
-`E: Problem + Send + Sync + 'static`. Poem imposes these error-branch bounds;
-conversion to `poem::Error` itself needs only `E: Problem + Send`.
-A `poem::Result<T>` handler can use `?` on a report-returning operation.
-The conversion consumes the original error and retains its public response;
-inspect or report diagnostics before converting.
-Alternatively, `poem::Error::from(&report)` requires `E: Problem + Sync` and
-leaves the original report available. The resulting Poem error contains only
-the public response and can outlive the report; it does not retain its source chain.
-
-Declarations use numeric literals, including in Actix applications:
-`#[problem(status = 409, ...)]`. No framework status import is needed for a
-declaration. Runtime definitions retain `problems::StatusCode` (`http` 1.x);
-the Actix adapter converts it numerically to Actix's `http` 0.2 status type.
-
-Aide's `OperationOutput` implementation for `Report<E>` reads the static
-declarations. It groups variants by status and lists each title and identity in
-the response description. All entries reference one `ProblemDetails<E::Data>` schema;
-only the standard members are supported. No global registry or per-variant
-schemas are required.
-
-Keep `Result<T, Report<E>>` when Aide needs these declared statuses. Returning
-only `impl IntoResponse` hides the report's `OperationOutput` implementation;
-the Axum response bound alone does not expose OpenAPI metadata.
-
-### Framework error boundaries
-
-Adapters render reports explicitly produced by the application. They do not
-intercept extractor rejections, middleware responses, or missing routes. For
-example, Axum normally rejects malformed JSON with a plain-text 400 response
-before calling a handler that takes `Json<T>`.
-
-Define an application-owned `ProblemJson<T>` extractor to share an explicit
-classification policy across handlers. Delegate parsing to Axum’s `Json<T>`,
-keep framework diagnostics in the source chain, and choose the public explanation:
-
-```rust
-# fn main() {
-# #[cfg(feature = "axum")]
-# {
-use axum::{
-    Json,
-    extract::{FromRequest, Request, rejection::JsonRejection},
-    response::{IntoResponse, Response},
-};
-use problems::IntoReport;
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-enum RequestProblem {
-    #[error("JSON extraction failed: {source}")]
-    #[problem(
-        type_uri = "urn:example:malformed-json",
-        status = 400,
-        title = "Malformed JSON",
-        detail = "The request body must contain valid JSON."
-    )]
-    MalformedJson { source: JsonRejection },
-}
-
-struct ProblemJson<T>(T);
-
-impl<T, S> FromRequest<S> for ProblemJson<T>
-where
-    T: serde::de::DeserializeOwned,
-    S: Send + Sync,
 {
-    type Rejection = Response;
+  "type": "urn:example:name-conflict",
+  "title": "Name Conflict",
+  "status": 409,
+  "detail": "The name 'monthly' is already in use.",
+  "data": { "name": "monthly" }
+}
+```
 
-    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
-        match Json::<T>::from_request(request, state).await {
-            Ok(Json(value)) => Ok(Self(value)),
-            Err(source @ JsonRejection::JsonSyntaxError(_)) => Err(
-                RequestProblem::MalformedJson { source }
-                    .into_report()
-                    .into_response(),
-            ),
-            Err(rejection) => Err(rejection.into_response()),
+Aide generates these OpenAPI responses for `POST /flows`:
+
+```json
+{
+  "200": { "description": "no content" },
+  "409": {
+    "description": "Name Conflict\nProblem type: urn:example:name-conflict",
+    "content": {
+      "application/problem+json": {
+        "schema": {
+          "$ref": "#/components/schemas/ProblemDetails_for_CreateProblemData_for_string"
         }
+      }
     }
+  }
 }
-
-async fn create(ProblemJson(value): ProblemJson<serde_json::Value>) -> Json<serde_json::Value> {
-    Json(value)
-}
-
-# let _router = axum::Router::<()>::new().route("/create", axum::routing::post(create));
-# }
-# }
 ```
 
-This recipe changes only JSON syntax failures. Other extraction rejections,
-such as missing JSON content type, retain their framework responses. Delegating
-to `Json<T>` also preserves Axum’s body limits. Handlers opt in by taking
-`ProblemJson<T>` as their final parameter because it consumes the request body.
-This type belongs to the application, not the library. The Axum example compares
-`POST /json` with `POST /json-problem`.
+The referenced component schema includes the public document and its typed
+`data` payload. The 200 response comes from the handler's `()` success type.
 
-See [Axum’s custom extractor guidance](https://docs.rs/axum/latest/axum/extract/index.html#customizing-extractor-responses).
+## Setup
 
-Router fallbacks and middleware require their own explicit classification at
-the framework's handling points. The same principle applies to all adapters:
-choose a declared problem where the failure is handled, then render its report.
+This crate is part of the workspace and is not published. From a sibling crate:
 
-## Framework examples
-
-### Combining problem enums
-
-A handler can combine existing problem enums through a boundary enum. Mark
-single-field tuple variants with `#[problem(transparent)]` to forward public
-metadata, detail, and instance without repeating their declarations:
-
-```rust
-use problems::{IntoReport, Problem, Report};
-
-#[derive(Debug, thiserror::Error, Problem)]
-#[problem(prefix = "urn:auth")]
-enum AuthProblem {
-    #[error("private authentication diagnostic")]
-    #[problem(401)]
-    Unauthorized,
-}
-
-#[derive(Debug, thiserror::Error, Problem)]
-#[problem(prefix = "urn:storage")]
-enum StorageProblem {
-    #[error("private storage diagnostic")]
-    #[problem(503)]
-    Unavailable,
-}
-
-#[derive(Debug, thiserror::Error, Problem)]
-enum HandlerProblem {
-    #[error(transparent)]
-    #[problem(transparent)]
-    Auth(#[from] AuthProblem),
-    #[error(transparent)]
-    #[problem(transparent)]
-    Storage(#[from] StorageProblem),
-}
-
-fn authenticate() -> Result<(), AuthProblem> {
-    Ok(())
-}
-
-fn store() -> Result<(), StorageProblem> {
-    Ok(())
-}
-
-fn operation() -> Result<(), HandlerProblem> {
-    authenticate()?;
-    store()?;
-    Ok(())
-}
-
-async fn handler() -> Result<(), Report<HandlerProblem>> {
-    operation().map_err(IntoReport::into_report)
-}
-
-assert_eq!(
-    HandlerProblem::definitions()
-        .map(|definition| definition.status.as_u16())
-        .collect::<Vec<_>>(),
-    [401, 503]
-);
+```toml
+[dependencies]
+problems = { path = "../problems", features = ["aide"] }
+axum = "0.8"
+aide = { version = "0.15", features = ["axum"] }
+thiserror = "2"
 ```
 
-`#[error(transparent)]` controls diagnostic forwarding; `#[problem(transparent)]`
-controls public problem forwarding. Transparent variants cannot also declare
-status, title, type URI, or detail. An enclosing prefix only affects locally
-declared variants. Aide reads all wrapped definitions without constructing errors.
+## Features
 
-`Problem::definitions()` now returns an iterator of static definition references.
-Manual implementations should return a slice's `.iter()` or chain other problem
-iterators; callers that need indexing can collect the references into a `Vec`.
+| Feature | Provides |
+| --- | --- |
+| `derive` (default) | `#[derive(Problem)]` for structs and enums |
+| `axum` | Axum responses with the declared status and `application/problem+json` |
+| `actix-web` | Actix Web responses with the declared status and `application/problem+json` |
+| `rocket` | Rocket responses with the declared status and `application/problem+json` |
+| `poem` | Poem responses with the declared status and `application/problem+json` |
+| `salvo` | Salvo responses with the declared status and `application/problem+json` |
+| `warp` | Warp responses with the declared status and `application/problem+json` |
+| `schemars` | Schemas for documents and generated public payloads |
+| `aide` | OpenAPI response schemas and declared statuses; enables `axum` and `schemars` |
 
-### Borrowed problems and diagnostic erasure
+## API
 
-Use a concrete problem type, or an aggregate enum, for handler return values.
-Aide obtains every possible declaration from that type's `definitions()` iterator.
-Borrowed trait objects can inspect the current error without changing ownership:
+- `Problem` defines what clients see: type, title, status, detail, and data.
+- `Report` wraps the error for an HTTP response while keeping it available
+  through `problem()` for diagnostics.
+- `ProblemDetails` is the outgoing document. Use `as_details()` to borrow its
+  data or `into_details()` to move it out of the report.
+- `ProblemDocument` reads an incoming problem document with Serde.
 
-```rust
-use problems::{IntoReport, Problem};
-use std::error::Error;
+Fields are public only when referenced in `detail` or selected with
+`#[problem(data)]`. Diagnostic sources stay private. Optional document members
+are omitted when absent.
 
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[error("storage operation failed")]
-#[problem(type_uri = "urn:example:storage", status = 503,
-          detail = "Unable to save the resource.")]
-struct StorageFailure {
-    source: std::io::Error,
-}
+## Integration
 
-let report = StorageFailure {
-    source: std::io::Error::other("private diagnostic"),
-}
-.into_report();
+Return `Result<T, Report<E>>` from Axum handlers. Keep the concrete `Report<E>`
+return type when using Aide so it can read the response declarations.
+See the [runnable Axum example](examples/axum.rs).
 
-let borrowed: &dyn Problem = report.problem();
-assert_eq!(borrowed.definition(), &StorageFailure::DEFINITION);
-assert_eq!(borrowed.detail().as_deref(), Some("Unable to save the resource."));
+The application classifies failures and handles framework rejections. Creating
+or rendering a report does not log errors or automatically convert unrelated
+failures into problems.
 
-// Own the public document before erasing the diagnostic error's type.
-let document = problems::ProblemDocument::from(report.as_details());
-let diagnostic: Box<dyn Error + Send + Sync> = Box::new(report.into_problem());
-assert!(diagnostic.source().unwrap().is::<std::io::Error>());
-assert_eq!(document.status(), Some(problems::StatusCode::SERVICE_UNAVAILABLE));
-# Ok::<(), serde_json::Error>(())
-```
+See [runtime documentation](src/lib.rs), [derive documentation](../problems-derive/src/lib.rs),
+and [framework examples](examples/) for the full API and attribute grammar.
 
-`definition()` describes one error value. `definitions()` describes every public
-problem the concrete type can produce. It requires `Self: Sized` and cannot be
-called through `dyn Problem`, consistent with Rust's
-[dyn compatibility rules](https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility).
-A `Box<dyn Problem>` can hold different concrete types on different calls; it
-supplies no static registry of those types. The library therefore does not
-implement `Problem` for that box or support `boxed.into_report()`. An empty list
-or the current value's definition would omit possible responses from OpenAPI.
+## Contributing
 
-After projection, an application may move the underlying error into
-`Box<dyn Error + Send + Sync>` for diagnostic storage. The box retains its error
-message and source chain, but its trait interface exposes neither public problem
-metadata nor Miette's diagnostic help, labels, and codes. Use a Miette report when
-you need that richer diagnostic interface, as shown below. Erasing to a formatted
-string also discards the source chain and typed downcasting. Perform any typed
-inspection before erasure, or downcast to a known error type afterward.
-
-`into_problem()` discards attached report context; keep the projected document
-when that context matters. The document is public data and does not retain the
-original error. `ProblemDocument` likewise carries public document data; it does
-not implement `Problem`, framework response traits, or Aide operation traits.
-Supporting heterogeneous erased handler errors would need a separate explicit
-registry and response contract. The aggregate enum above supplies the complete
-static declarations with the existing API.
-
-### Warp rejection recovery
-
-Warp applications can wrap a report in an application-owned rejection and
-recover it through a borrowed reply. The wrapper's problem type must satisfy
-`Send + Sync + 'static`; it does not need `Clone`.
-
-```rust
-# fn main() {
-# #[cfg(feature = "warp")]
-# {
-use problems::{IntoReport, Report};
-use warp::{Filter, Rejection, Reply};
-
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum AppProblem {
-    #[error("private storage failure: {source}")]
-    #[problem(503)]
-    Unavailable { source: std::io::Error },
-}
-
-#[derive(Debug)]
-struct AppRejection(Report<AppProblem>);
-impl warp::reject::Reject for AppRejection {}
-
-async fn create() -> Result<(), AppProblem> {
-    Err(AppProblem::Unavailable {
-        source: std::io::Error::other("private diagnostic"),
-    })
-}
-
-async fn create_handler() -> Result<&'static str, Rejection> {
-    create()
-        .await
-        .map_err(|problem| warp::reject::custom(AppRejection(problem.into_report())))?;
-    Ok("created")
-}
-
-async fn recover_problem(
-    rejection: Rejection,
-) -> Result<warp::reply::Response, Rejection> {
-    if let Some(problem) = rejection.find::<AppRejection>() {
-        return Ok((&problem.0).into_response());
-    }
-    Err(rejection)
-}
-
-let routes = warp::path("create")
-    .and(warp::path::end())
-    .and(warp::post())
-    .and_then(create_handler)
-    .recover(recover_problem);
-# let _ = routes;
-# }
-# }
-```
-
-Recovery renders an owned response while borrowing the stored report. It leaves
-unrelated rejections for Warp or subsequent application recovery to handle.
-Apply recovery after combining routes when alternative routes should be tried
-before an application rejection is turned into a response. Inspect diagnostics
-inside recovery before returning the response if the application needs them.
-The library implements `Reply` for owned and borrowed reports; applications own
-their `Reject` wrapper and classification policy.
-
-### Running examples
-
-Each example serves `GET /problem` at `127.0.0.1:3000` and returns a conflict
-with formatted public detail. Run one server at a time:
+Keep changes focused and cover changed behavior. Enable the relevant feature
+when changing an integration.
 
 ```sh
-cargo run -p problems --example axum --features axum
-cargo run -p problems --example actix-web --features actix-web
-cargo run -p problems --example rocket --features rocket
-cargo run -p problems --example poem --features poem
-cargo run -p problems --example salvo --features salvo
-cargo run -p problems --example warp --features warp
-curl -i http://127.0.0.1:3000/problem
+cargo test -p problems -p problems-derive
+cargo fmt --all --check
 ```
-
-Axum, Actix Web, and Rocket examples return reports through `Result` handlers.
-Poem and Salvo return reports directly; Warp returns them from a filter. Poem
-error conversions and Warp rejection recovery remain application concerns.
-
-Each example contains one in-process smoke test checking its route's status,
-media type, and public body. For example:
-
-```sh
-cargo test -p problems --example actix-web --features actix-web
-cargo test -p problems --examples --all-features
-```
-
-## Diagnostics
-
-Use `thiserror`, `miette`, or handwritten error implementations for diagnostic
-formatting and source chains. Add Miette to your application with its `derive`
-feature; the same error can declare both diagnostics and public problem metadata:
-
-```rust
-use miette::Diagnostic;
-use problems::IntoReport;
-use std::error::Error;
-
-#[derive(Debug, thiserror::Error, miette::Diagnostic, problems::Problem)]
-#[error("storage operation failed")]
-#[diagnostic(code(app::storage), help("Check the storage service logs."))]
-#[problem(type_uri = "urn:example:storage",
-          detail = "Unable to save the resource.")]
-struct StorageFailure {
-    #[source]
-    source: std::io::Error,
-}
-
-let report = StorageFailure {
-    source: std::io::Error::other("private storage diagnostic"),
-}
-.into_report()
-.with_instance("urn:request:42");
-
-// Borrow diagnostic information while retaining the HTTP report.
-assert_eq!(report.problem().to_string(), "storage operation failed");
-assert!(report.problem().source().is_some());
-assert_eq!(report.problem().code().unwrap().to_string(), "app::storage");
-
-// Own the public document before moving the original error into Miette.
-let document = problems::ProblemDocument::from(report.as_details());
-let diagnostic = miette::Report::new(report.into_problem());
-assert!(diagnostic.downcast_ref::<StorageFailure>().is_some());
-assert!(diagnostic.chain().any(|cause| cause.is::<std::io::Error>()));
-assert_eq!(document.detail(), Some("Unable to save the resource."));
-assert_eq!(document.instance(), Some("urn:request:42"));
-# Ok::<(), serde_json::Error>(())
-```
-
-`problem()` borrows the original error. `into_problem()` consumes the HTTP report,
-moves out that error, and discards attached report context such as `instance`.
-These examples have no public payload, so
-`ProblemDocument::from(report.as_details())` owns the public document before the
-original error is moved. For borrowed payloads, serialize before moving the error
-if an independent wire document is needed. Miette's
-[`Report::new`](https://docs.rs/miette/latest/miette/struct.Report.html#method.new)
-requires the original error to implement `Diagnostic + Send + Sync + 'static`.
-The HTTP wrapper implements neither `std::error::Error` nor `miette::Diagnostic`;
-pass its underlying error to Miette.
-
-For diagnostic text, format `report.problem()` in every feature configuration.
-Formatting `report` itself with `{}` is available only with `actix-web`, which
-adds forwarding `Display` to satisfy
-[`ResponseError`](https://docs.rs/actix-web/latest/actix_web/error/trait.ResponseError.html).
-`Debug` remains available for the wrapper. Cargo
-[feature unification](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification)
-can enable Actix support through another consumer of the same package, so do not
-rely on wrapper `Display` in code intended to work without that feature.
-Diagnostic messages, help, codes, and source chains do not enter the HTTP body.
-
-The application decides when to log, which severity to use, and how to enrich
-spans. Conversions, serialization, documentation, and HTTP response generation
-emit no diagnostic events. Only explicitly declared public fields enter the
-response body.
-
-This initial library does not normalize extractor rejections, provide custom
-response headers, or automatically flatten payload structs.
-
-## Sources
-
-- [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)
-- [Axum error handling](https://docs.rs/axum/latest/axum/error_handling/index.html)
-- [Aide operation outputs](https://docs.rs/aide/latest/aide/operation/trait.OperationOutput.html)
-
-- [Actix Web response errors](https://docs.rs/actix-web/latest/actix_web/error/trait.ResponseError.html)
-- [Rocket responders](https://docs.rs/rocket/latest/rocket/response/trait.Responder.html)
-- [Poem responses](https://docs.rs/poem/latest/poem/web/trait.IntoResponse.html)
-- [Salvo scribes](https://docs.rs/salvo/latest/salvo/writing/trait.Scribe.html)
-- [Warp replies](https://docs.rs/warp/latest/warp/reply/trait.Reply.html)
