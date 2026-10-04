@@ -1,5 +1,8 @@
 error: public data names cannot be empty
- --> tests/ui/fail_data_empty_name.rs:4:35
+
+         = help: provide a nonempty serialized name, or use `#[problem(data)]` on a named field
+
+ --> tests/ui/fail_data_empty_name.rs:5:22
   |
-4 | struct Failure { #[problem(data = "")] value: String }
-  |                                   ^^
+5 |     #[problem(data = "")]
+  |                      ^^

@@ -1,4 +1,8 @@
 error: transparent cannot be combined with other problem attributes
+
+         = help: keep only `#[problem(transparent)]` on this variant; configure metadata on the inner problem
+         = note: transparent variants forward metadata, detail, instance, and public data to their inner `Problem`
+
  --> tests/ui/fail_transparent_metadata.rs:4:5
   |
 4 |     #[problem(transparent, status = 409)]

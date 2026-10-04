@@ -1,5 +1,9 @@
 error: transparent problem forwarding is supported only on enum variants
- --> tests/ui/fail_struct_transparent.rs:2:1
+
+         = help: declare an enum variant such as `Wrapped(Inner)` with `#[problem(transparent)]`
+         = note: transparent variants forward metadata, detail, instance, and public data to their inner `Problem`
+
+ --> tests/ui/fail_struct_transparent.rs:4:8
   |
-2 | #[error(transparent)]
-  | ^
+4 | struct Storage(std::io::Error);
+  |        ^^^^^^^

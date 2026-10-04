@@ -2,4 +2,4 @@
 #[error("private")]
 #[problem(type_uri = "urn:test")]
 struct Failure(#[problem(data)] u8);
-fn main() {  }
+fn main() {}

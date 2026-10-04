@@ -6,4 +6,6 @@ enum Failure {
     #[problem(detail = "{0:04x}")]
     Conflict(u32),
 }
-fn main() { assert_eq!(Failure::Conflict(15).detail().as_deref(), Some("000f")); }
+fn main() {
+    assert_eq!(Failure::Conflict(15).detail().as_deref(), Some("000f"));
+}

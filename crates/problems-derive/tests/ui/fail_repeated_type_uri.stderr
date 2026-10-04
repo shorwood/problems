@@ -1,0 +1,23 @@
+error: duplicate problem type URI `urn:test:repeated`
+
+         = help: set a distinct `type_uri` explicitly on one of these declarations
+
+ --> tests/ui/fail_repeated_type_uri.rs:7:26
+  |
+7 |     #[problem(type_uri = "urn:test:repeated")]
+  |                          ^^^^^^^^^^^^^^^^^^^
+
+error: first declared here
+ --> tests/ui/fail_repeated_type_uri.rs:4:26
+  |
+4 |     #[problem(type_uri = "urn:test:repeated")]
+  |                          ^^^^^^^^^^^^^^^^^^^
+
+error: duplicate problem type URI `urn:test:repeated`
+
+         = help: set a distinct `type_uri` explicitly on one of these declarations
+
+  --> tests/ui/fail_repeated_type_uri.rs:10:26
+   |
+10 |     #[problem(type_uri = "urn:test:repeated")]
+   |                          ^^^^^^^^^^^^^^^^^^^

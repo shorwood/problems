@@ -1,5 +1,14 @@
-error: duplicate public data name
- --> tests/ui/fail_data_duplicate_name.rs:4:69
+error: duplicate public data name `x`
+
+         = help: give the selected fields distinct serialized names using `#[problem(data = "public_name")]`
+
+ --> tests/ui/fail_data_duplicate_name.rs:7:22
   |
-4 | struct Failure { #[problem(data = "x")] first: u8, #[problem(data = "x")] second: u8 }
-  |                                                                     ^^^
+7 |     #[problem(data = "x")]
+  |                      ^^^
+
+error: first declared here
+ --> tests/ui/fail_data_duplicate_name.rs:5:22
+  |
+5 |     #[problem(data = "x")]
+  |                      ^^^

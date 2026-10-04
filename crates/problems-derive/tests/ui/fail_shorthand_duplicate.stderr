@@ -1,4 +1,7 @@
-error: duplicate problem attribute
+error: duplicate problem attribute `status`
+
+         = help: keep exactly one declaration of this attribute
+
  --> tests/ui/fail_shorthand_duplicate.rs:6:15
   |
 6 |     #[problem(status = 409)]

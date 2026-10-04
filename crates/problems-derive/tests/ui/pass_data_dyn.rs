@@ -2,4 +2,7 @@
 #[error("private")]
 #[problem(type_uri = "urn:test")]
 struct Failure;
-fn main() { let problem: &dyn issues::Problem = &Failure; let _ = problem.definition(); }
+fn main() {
+    let problem: &dyn issues::Problem = &Failure;
+    let _ = problem.definition();
+}

@@ -1,5 +1,8 @@
-error: problem identity and title must not be empty
- --> tests/ui/fail_title_empty.rs:3:5
+error: problem title must not be empty
+
+         = help: provide a nonempty title, or omit `title` to derive it from the declaration name
+
+ --> tests/ui/fail_title_empty.rs:4:54
   |
-3 |     #[error("invalid")]
-  |     ^
+4 |     #[problem(type_uri = "urn:test:invalid", title = "")]
+  |                                                      ^^

@@ -1,5 +1,8 @@
-error: problem identity and title must not be empty
- --> tests/ui/fail_type_uri_empty_override.rs:4:5
+error: problem type URI must not be empty
+
+         = help: provide a nonempty `type_uri`, such as "urn:example:failure"
+
+ --> tests/ui/fail_type_uri_empty_override.rs:5:26
   |
-4 |     #[error("failure")]
-  |     ^
+5 |     #[problem(type_uri = "")]
+  |                          ^^

@@ -1,4 +1,8 @@
 error: diagnostic sources cannot be formatted into public detail
+
+         = help: remove the source field's placeholder from `detail`; format a separate public field instead
+         = note: diagnostic sources are kept out of public problem details
+
  --> tests/ui/fail_tuple_from_detail.rs:5:24
   |
 5 |     #[problem(detail = "Failure: {0}")]

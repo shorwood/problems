@@ -5,4 +5,4 @@ enum Failure {
     #[problem(detail = "{}")]
     Conflict(String),
 }
-fn main() {  }
+fn main() {}

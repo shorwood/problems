@@ -1,0 +1,39 @@
+error: unknown detail field `missing`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: available detail fields: value
+
+ --> tests/ui/fail_unknown_detail_available_fields.rs:5:24
+  |
+5 |     #[problem(detail = "{missing}")]
+  |                        ^^^^^^^^^^^
+
+error: unknown detail field `2`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: available detail fields: 1
+
+  --> tests/ui/fail_unknown_detail_available_fields.rs:11:24
+   |
+11 |     #[problem(detail = "{2}")]
+   |                        ^^^^^
+
+error: unknown detail field `missing`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: this declaration has no fields that can appear in public detail
+
+  --> tests/ui/fail_unknown_detail_available_fields.rs:14:24
+   |
+14 |     #[problem(detail = "{missing}")]
+   |                        ^^^^^^^^^^^
+
+error: unknown detail field `missing`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: this declaration has no fields that can appear in public detail
+
+  --> tests/ui/fail_unknown_detail_available_fields.rs:17:24
+   |
+17 |     #[problem(detail = "{missing}")]
+   |                        ^^^^^^^^^^^

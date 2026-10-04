@@ -1,5 +1,8 @@
-error: only data is supported on problem fields
- --> tests/ui/fail_struct_field_attribute.rs:4:33
+error: unsupported problem attribute on the field
+
+         = help: use `#[problem(data)]` or `#[problem(data = "public_name")]` to select a field
+
+ --> tests/ui/fail_struct_field_attribute.rs:5:15
   |
-4 | struct InvalidInput { #[problem(status = 409)] value: String }
-  |                                 ^^^^^^
+5 |     #[problem(status = 409)]
+  |               ^^^^^^

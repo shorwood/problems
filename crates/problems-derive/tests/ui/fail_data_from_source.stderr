@@ -1,5 +1,9 @@
 error: diagnostic sources cannot be exposed as public data
- --> tests/ui/fail_data_from_source.rs:3:62
+
+         = help: remove `#[problem(data)]` from the source field; select a separate public field instead
+         = note: diagnostic sources are kept out of public problem details
+
+ --> tests/ui/fail_data_from_source.rs:8:26
   |
-3 | enum Failure { #[error(transparent)] #[problem(500)] Wrapped(#[from] #[problem(data = "source")] std::io::Error) }
-  |                                                              ^
+8 |         #[problem(data = "source")]
+  |                          ^^^^^^^^

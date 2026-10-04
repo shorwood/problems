@@ -1,4 +1,8 @@
-error: status requires an integer literal from 100 through 999, such as status = 409; omit status to use 500
+error: problem status must be an integer literal from 100 through 999
+
+         = help: use `#[problem(status = 409)]` or `#[problem(409)]` with an integer literal
+         = note: omitting `status` uses 500; constants, expressions, and string literals are not supported
+
  --> tests/ui/fail_status_call.rs:7:74
   |
 7 |     #[problem(type_uri = "urn:test:failure", title = "Failure", status = status())]

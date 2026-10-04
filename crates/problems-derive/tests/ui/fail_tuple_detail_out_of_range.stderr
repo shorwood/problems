@@ -1,4 +1,8 @@
 error: unknown detail field `1`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: available detail fields: 0
+
  --> tests/ui/fail_tuple_detail_out_of_range.rs:5:24
   |
 5 |     #[problem(detail = "{1}")]

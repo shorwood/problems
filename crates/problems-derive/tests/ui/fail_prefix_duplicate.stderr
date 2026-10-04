@@ -1,4 +1,7 @@
-error: duplicate problem prefix
+error: duplicate problem attribute `prefix`
+
+         = help: keep exactly one declaration of this attribute
+
  --> tests/ui/fail_prefix_duplicate.rs:3:11
   |
 3 | #[problem(prefix = "urn:other")]

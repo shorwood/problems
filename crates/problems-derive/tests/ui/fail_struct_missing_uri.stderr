@@ -1,0 +1,8 @@
+error: missing problem attribute `type_uri`
+
+         = help: add `#[problem(type_uri = "urn:example:failure")]` to this struct
+
+ --> tests/ui/fail_struct_missing_uri.rs:3:8
+  |
+3 | struct Failure;
+  |        ^^^^^^^

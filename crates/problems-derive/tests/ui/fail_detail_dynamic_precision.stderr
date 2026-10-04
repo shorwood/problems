@@ -1,4 +1,7 @@
-error: dynamic width and precision are not supported in detail; use named variant fields with literal width and precision
+error: dynamic width and precision are not supported in `detail`
+
+         = help: use literal width and precision, such as `{value:8.2}` for named fields or `{0:8.2}` for tuple fields
+
  --> tests/ui/fail_detail_dynamic_precision.rs:7:18
   |
 7 |         detail = "{value:.precision$}"

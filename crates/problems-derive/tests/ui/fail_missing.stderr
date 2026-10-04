@@ -1,4 +1,8 @@
 error: unknown detail field `missing`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: available detail fields: type
+
  --> tests/ui/fail_missing.rs:4:74
   |
 4 |     #[problem(type_uri = "urn:test:invalid", title = "Invalid", detail = "{missing}")]

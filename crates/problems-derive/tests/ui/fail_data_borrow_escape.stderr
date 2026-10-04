@@ -1,8 +1,11 @@
 error[E0597]: `report` does not live long enough
- --> tests/ui/fail_data_borrow_escape.rs:5:103
-  |
-5 | ...et report = issues::Report::new(Failure { value: "x".into() }); details = report.as_details(); } let _ = serde_json::to_value(details); }
-  |       ------                                                                 ^^^^^^               -                              ------- borrow later used here
-  |       |                                                                      |                    |
-  |       |                                                                      |                    `report` dropped here while still borrowed
-  |       binding `report` declared here                                         borrowed value does not live long enough
+  --> tests/ui/fail_data_borrow_escape.rs:12:19
+   |
+11 |         let report = issues::Report::new(Failure { value: "x".into() });
+   |             ------ binding `report` declared here
+12 |         details = report.as_details();
+   |                   ^^^^^^ borrowed value does not live long enough
+13 |     }
+   |     - `report` dropped here while still borrowed
+14 |     let _ = serde_json::to_value(details);
+   |                                  ------- borrow later used here

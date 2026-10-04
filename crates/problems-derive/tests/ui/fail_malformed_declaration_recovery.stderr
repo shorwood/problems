@@ -1,0 +1,23 @@
+error: expected string literal
+ --> tests/ui/fail_malformed_declaration_recovery.rs:4:26
+  |
+4 |     #[problem(type_uri = 123)]
+  |                          ^^^
+
+error: problem title must not be empty
+
+         = help: provide a nonempty title, or omit `title` to derive it from the declaration name
+
+  --> tests/ui/fail_malformed_declaration_recovery.rs:10:52
+   |
+10 |     #[problem(type_uri = "urn:test:title", title = "")]
+   |                                                    ^^
+
+error: problem type URI must not be empty
+
+         = help: provide a nonempty `type_uri`, such as "urn:example:failure"
+
+  --> tests/ui/fail_malformed_declaration_recovery.rs:13:26
+   |
+13 |     #[problem(type_uri = "")]
+   |                          ^^

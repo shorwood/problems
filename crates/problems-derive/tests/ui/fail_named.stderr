@@ -1,4 +1,8 @@
 error: diagnostic sources cannot be formatted into public detail
+
+         = help: remove the source field's placeholder from `detail`; format a separate public field instead
+         = note: diagnostic sources are kept out of public problem details
+
  --> tests/ui/fail_named.rs:7:18
   |
 7 |         detail = "Reason: {source}"

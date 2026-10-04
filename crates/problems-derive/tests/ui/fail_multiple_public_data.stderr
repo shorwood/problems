@@ -1,0 +1,33 @@
+error: diagnostic sources cannot be exposed as public data
+
+         = help: remove `#[problem(data)]` from the source field; select a separate public field instead
+         = note: diagnostic sources are kept out of public problem details
+
+ --> tests/ui/fail_multiple_public_data.rs:7:9
+  |
+7 |         source: std::io::Error,
+  |         ^^^^^^
+
+error: public data names cannot be empty
+
+         = help: provide a nonempty serialized name, or use `#[problem(data)]` on a named field
+
+  --> tests/ui/fail_multiple_public_data.rs:11:26
+   |
+11 |         #[problem(data = "")]
+   |                          ^^
+
+error: duplicate public data name `value`
+
+         = help: give the selected fields distinct serialized names using `#[problem(data = "public_name")]`
+
+  --> tests/ui/fail_multiple_public_data.rs:18:26
+   |
+18 |         #[problem(data = "value")]
+   |                          ^^^^^^^
+
+error: first declared here
+  --> tests/ui/fail_multiple_public_data.rs:16:26
+   |
+16 |         #[problem(data = "value")]
+   |                          ^^^^^^^

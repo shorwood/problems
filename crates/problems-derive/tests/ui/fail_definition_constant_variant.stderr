@@ -1,4 +1,30 @@
-error: generated problem definition constant conflicts with an enum variant
+error: generated problem definition constant `CONFLICT` conflicts with an enum variant
+
+         = help: rename a variant so its generated definition constant has a distinct name
+         = note: definition constant names are generated from variant names in SHOUTY_SNAKE_CASE
+
+ --> tests/ui/fail_definition_constant_variant.rs:5:5
+  |
+5 |     Conflict,
+  |     ^^^^^^^^
+
+error: first declared here
+ --> tests/ui/fail_definition_constant_variant.rs:8:5
+  |
+8 |     CONFLICT,
+  |     ^^^^^^^^
+
+error: problem variants generate the same definition constant name `CONFLICT`
+
+         = help: rename a variant so its generated definition constant has a distinct name
+         = note: definition constant names are generated from variant names in SHOUTY_SNAKE_CASE
+
+ --> tests/ui/fail_definition_constant_variant.rs:8:5
+  |
+8 |     CONFLICT,
+  |     ^^^^^^^^
+
+error: first declared here
  --> tests/ui/fail_definition_constant_variant.rs:5:5
   |
 5 |     Conflict,

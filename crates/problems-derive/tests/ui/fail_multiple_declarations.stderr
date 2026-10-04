@@ -1,0 +1,37 @@
+error: missing problem attribute `type_uri`
+
+         = help: add `#[problem(type_uri = "urn:example:failure")]` to this declaration, or set `#[problem(prefix = "urn:example")]` on its enum
+
+  --> tests/ui/fail_multiple_declarations.rs:10:5
+   |
+10 |     MissingUri,
+   |     ^^^^^^^^^^
+
+error: problem status must be an integer literal from 100 through 999
+
+         = help: use `#[problem(status = 409)]` or `#[problem(409)]` with an integer literal
+         = note: omitting `status` uses 500; constants, expressions, and string literals are not supported
+
+  --> tests/ui/fail_multiple_declarations.rs:12:54
+   |
+12 |     #[problem(type_uri = "urn:test:status", status = "409")]
+   |                                                      ^^^^^
+
+error: unknown detail field `missing`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: available detail fields: value
+
+  --> tests/ui/fail_multiple_declarations.rs:15:54
+   |
+15 |     #[problem(type_uri = "urn:test:detail", detail = "{missing}")]
+   |                                                      ^^^^^^^^^^^
+
+error: public data names cannot be empty
+
+         = help: provide a nonempty serialized name, or use `#[problem(data)]` on a named field
+
+ --> tests/ui/fail_multiple_declarations.rs:6:26
+  |
+6 |         #[problem(data = "")]
+  |                          ^^

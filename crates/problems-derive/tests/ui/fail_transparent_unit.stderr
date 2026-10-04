@@ -1,5 +1,9 @@
 error: transparent requires a single-field tuple variant
- --> tests/ui/fail_transparent_unit.rs:3:5
+
+         = help: use a tuple variant containing exactly one field, such as `Wrapped(Inner)`
+         = note: transparent variants forward metadata, detail, instance, and public data to their inner `Problem`
+
+ --> tests/ui/fail_transparent_unit.rs:5:5
   |
-3 |     #[error("invalid")]
-  |     ^
+5 |     Invalid,
+  |     ^^^^^^^

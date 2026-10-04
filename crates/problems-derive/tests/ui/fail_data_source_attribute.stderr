@@ -1,5 +1,9 @@
 error: diagnostic sources cannot be exposed as public data
- --> tests/ui/fail_data_source_attribute.rs:4:18
+
+         = help: remove `#[problem(data)]` from the source field; select a separate public field instead
+         = note: diagnostic sources are kept out of public problem details
+
+ --> tests/ui/fail_data_source_attribute.rs:7:5
   |
-4 | struct Failure { #[source] #[problem(data)] diagnostic: std::io::Error }
-  |                  ^
+7 |     diagnostic: std::io::Error,
+  |     ^^^^^^^^^^

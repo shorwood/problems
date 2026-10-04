@@ -6,4 +6,9 @@ enum Failure {
     #[problem(detail = "Name: {0}")]
     Conflict(String),
 }
-fn main() { assert_eq!(Failure::Conflict("taken".into()).detail().as_deref(), Some("Name: taken")); }
+fn main() {
+    assert_eq!(
+        Failure::Conflict("taken".into()).detail().as_deref(),
+        Some("Name: taken")
+    );
+}

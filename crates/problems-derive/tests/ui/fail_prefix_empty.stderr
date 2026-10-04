@@ -1,4 +1,7 @@
 error: problem prefix must not be empty
+
+         = help: provide a nonempty prefix, or omit `prefix` and specify `type_uri` on every variant
+
  --> tests/ui/fail_prefix_empty.rs:2:20
   |
 2 | #[problem(prefix = "")]

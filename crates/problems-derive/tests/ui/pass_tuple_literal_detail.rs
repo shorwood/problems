@@ -7,6 +7,8 @@ enum Failure {
     Conflict(String),
 }
 fn main() {
-    let details = Failure::Conflict("private field".into()).into_report().into_details();
+    let details = Failure::Conflict("private field".into())
+        .into_report()
+        .into_details();
     assert_eq!(details.detail(), Some("Use {another} name."));
 }

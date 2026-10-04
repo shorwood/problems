@@ -1,5 +1,8 @@
 error: missing problem attribute `type_uri`
- --> tests/ui/fail_type_uri_missing.rs:4:5
+
+         = help: add `#[problem(type_uri = "urn:example:failure")]` to this declaration, or set `#[problem(prefix = "urn:example")]` on its enum
+
+ --> tests/ui/fail_type_uri_missing.rs:5:5
   |
-4 |     #[error("failure")]
-  |     ^
+5 |     NameConflict,
+  |     ^^^^^^^^^^^^

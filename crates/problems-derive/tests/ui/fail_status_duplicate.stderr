@@ -1,4 +1,7 @@
-error: duplicate problem attribute
+error: duplicate problem attribute `status`
+
+         = help: keep exactly one declaration of this attribute
+
  --> tests/ui/fail_status_duplicate.rs:8:9
   |
 8 |         status = 409

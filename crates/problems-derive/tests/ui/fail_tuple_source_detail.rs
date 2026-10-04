@@ -5,4 +5,4 @@ enum Failure {
     #[problem(detail = "{0}")]
     Conflict(#[source] std::io::Error),
 }
-fn main() {  }
+fn main() {}

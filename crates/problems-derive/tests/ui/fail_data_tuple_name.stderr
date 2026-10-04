@@ -1,4 +1,7 @@
 error: tuple data fields require an explicit public name
+
+         = help: select this tuple field with `#[problem(data = "public_name")]`
+
  --> tests/ui/fail_data_tuple_name.rs:4:26
   |
 4 | struct Failure(#[problem(data)] u8);
