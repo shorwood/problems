@@ -102,15 +102,58 @@ Renaming a variant changes its generated public problem identity. Set an explici
 `type_uri` to preserve an established identity through a Rust rename. Titles do
 not influence URI generation. Status still defaults to 500 when omitted.
 
-Titles remain static. Detail supports named fields, Rust scalar formatting
-specifiers such as `{count:04x}`, and escaped braces (`{{` and `}}`). Positional
-arguments and nested/dynamic format parameters are outside the initial derive
-contract. Formatting a field into detail does not expose it as a separate member.
+Titles remain static. Detail supports named fields, explicit tuple indexes
+(`{0}`), Rust scalar formatting specifiers such as `{count:04x}`, and escaped
+braces (`{{` and `}}`). Implicit arguments (`{}`) and dynamic width or precision
+are unsupported. Formatting a field into detail does not expose it as a separate member.
 
 The document contains only `type`, `title`, `status`, optional `detail`, and
 optional `instance`. Other error fields remain diagnostic. Source fields
 (named `source`, or marked `#[source]` / `#[from]` / `#[error(source)]`) cannot be formatted
-into public detail. The derive supports unit and named-field enum variants.
+into public detail. The derive supports unit, named-field, and tuple enum variants. Tuple detail supports explicit positional fields (`{0}`, `{1:04x}`);
+public detail cannot interpolate diagnostic source fields.
+
+Ordinary tuple source variants retain thiserror's familiar conversion form:
+
+```rust
+use problems::{IntoReport, Problem};
+use std::error::Error;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum AppProblem {
+    #[error("storage failed")]
+    #[problem(detail = "Unable to save the resource.")]
+    Storage(#[from] std::io::Error),
+}
+
+let error = AppProblem::from(std::io::Error::other("private diagnostic"));
+let report = error.into_report();
+assert!(report.problem().source().is_some());
+assert_eq!(AppProblem::STORAGE.status, 500);
+assert_eq!(report.problem().definition(), &AppProblem::STORAGE);
+assert_eq!(report.details().detail(), Some("Unable to save the resource."));
+```
+
+Public tuple fields can use explicit indexes, while source fields stay diagnostic:
+
+```rust
+use problems::Problem;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum AppProblem {
+    #[error("storage failed for {1}")]
+    #[problem(detail = "Unable to save {1}.")]
+    Storage(#[source] std::io::Error, String),
+}
+
+let error = AppProblem::Storage(std::io::Error::other("private"), "document".into());
+assert_eq!(error.detail().as_deref(), Some("Unable to save document."));
+```
+
+These variants declare their own public identity. `#[problem(transparent)]`
+instead forwards the wrapped problem's metadata and occurrence data.
 
 `Report::from(error)` and `error.into_report()` retain the same typed error.
 `ProblemDetails::from(&report)` and `Report::details` construct an owned

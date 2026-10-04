@@ -55,10 +55,13 @@ pub struct ProblemDefinition {
 /// Only the definition, detail, and instance enter the public document.
 ///
 /// Implement this trait directly, or use `#[derive(Problem)]` with the `derive`
-/// feature, enabled by default. The derive implements `definition()` and
+/// feature, enabled by default. Unit, named-field, and tuple variants are accepted.
+/// Tuple detail uses explicit indexes such as `{0}`; diagnostic sources cannot
+/// be interpolated.
+/// The derive implements `definition()` and
 /// `definitions()` from each variant's `#[problem(...)]` declaration. It also
 /// implements `detail()` when a detail format is declared, using the variant's
-/// named fields. Status accepts an integer literal from 100 through 999 and defaults to
+/// named fields or explicit tuple indexes. Status accepts an integer literal from 100 through 999 and defaults to
 /// `StatusCode::INTERNAL_SERVER_ERROR` when omitted. `instance()` defaults to `None`.
 /// `#[problem(409)]` abbreviates `#[problem(status = 409)]`. Titles default to
 /// the variant name in Title Case, such as `NameConflict` becoming `Name Conflict`.

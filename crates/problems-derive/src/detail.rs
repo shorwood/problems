@@ -1,22 +1,29 @@
 use std::collections::{BTreeMap, BTreeSet};
 use syn::{Ident, LitStr, ext::IdentExt, parse::Parser};
 
-// Extract explicit named arguments and their formatting traits. Rust's format!
+// Extract explicit field arguments and their formatting traits. Rust's format!
 // remains responsible for validating format specifiers; this scanner validates
 // field ownership and keeps unreferenced fields out of generated match arms.
+// Tuple indexes become named arguments so sparse references need no unused args.
 pub(crate) fn detail_fields(
     detail: &LitStr,
-) -> syn::Result<BTreeMap<String, BTreeSet<&'static str>>> {
+    tuple: bool,
+) -> syn::Result<(LitStr, BTreeMap<String, BTreeSet<&'static str>>)> {
     let text = detail.value();
     let mut chars = text.chars().peekable();
+    let mut rewritten = String::new();
     let mut fields = BTreeMap::<String, BTreeSet<&'static str>>::new();
     while let Some(character) = chars.next() {
         match character {
             '{' if chars.peek() == Some(&'{') => {
                 chars.next();
+                rewritten.push(character);
+                rewritten.push(character);
             }
             '}' if chars.peek() == Some(&'}') => {
                 chars.next();
+                rewritten.push(character);
+                rewritten.push(character);
             }
             '{' => {
                 let mut placeholder = String::new();
@@ -33,12 +40,33 @@ pub(crate) fn detail_fields(
                     }
                 }
                 let (name, specifier) = placeholder.split_once(':').unwrap_or((&placeholder, ""));
-                Ident::parse_any.parse_str(name).map_err(|_| {
-                    syn::Error::new(
-                        detail.span(),
-                        "detail formatting requires named variant fields",
-                    )
-                })?;
+                let argument = if tuple {
+                    if name.is_empty() || !name.bytes().all(|byte| byte.is_ascii_digit()) {
+                        return Err(syn::Error::new(
+                            detail.span(),
+                            "tuple detail requires explicit field indexes, such as {0}",
+                        ));
+                    }
+                    let index = name.parse::<usize>().map_err(|_| {
+                        syn::Error::new(detail.span(), "tuple detail field index is out of range")
+                    })?;
+                    format!("__problem_field_{index}")
+                } else {
+                    Ident::parse_any.parse_str(name).map_err(|_| {
+                        syn::Error::new(
+                            detail.span(),
+                            "detail formatting requires named variant fields",
+                        )
+                    })?;
+                    name.to_owned()
+                };
+                rewritten.push('{');
+                rewritten.push_str(&argument);
+                if placeholder.contains(':') {
+                    rewritten.push(':');
+                    rewritten.push_str(specifier);
+                }
+                rewritten.push('}');
                 // A fill character followed by alignment is literal, even `$` or `*`.
                 let mut parameters = specifier.chars();
                 let mut prefix = parameters.clone();
@@ -66,7 +94,14 @@ pub(crate) fn detail_fields(
                     Some('E') => "UpperExp",
                     _ => "Display",
                 };
-                fields.entry(name.into()).or_default().insert(trait_name);
+                fields
+                    .entry(if tuple {
+                        name.parse::<usize>().unwrap().to_string()
+                    } else {
+                        name.into()
+                    })
+                    .or_default()
+                    .insert(trait_name);
             }
             '}' => {
                 return Err(syn::Error::new(
@@ -74,8 +109,8 @@ pub(crate) fn detail_fields(
                     "unmatched closing brace in detail",
                 ));
             }
-            _ => {}
+            _ => rewritten.push(character),
         }
     }
-    Ok(fields)
+    Ok((LitStr::new(&rewritten, detail.span()), fields))
 }

@@ -18,10 +18,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<Tokens> {
 
 pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Result<Tokens> {
     let Data::Enum(data) = &input.data else {
-        return Err(syn::Error::new(
-            input.span(),
-            "Problem derives on enums with unit or named-field variants",
-        ));
+        return Err(syn::Error::new(input.span(), "Problem derives on enums"));
     };
     let prefix = prefix(&input.attrs)?;
     let mut type_uris = BTreeSet::new();
@@ -76,12 +73,6 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             definition_iter = quote!(::std::iter::Iterator::chain(#definition_iter, <#ty as #runtime::Problem>::definitions()));
             continue;
         }
-        if matches!(variant.fields, Fields::Unnamed(_)) {
-            return Err(syn::Error::new(
-                variant.span(),
-                "use unit or named-field problem variants",
-            ));
-        }
         let declaration = declaration(
             &variant.attrs,
             variant.span(),
@@ -96,7 +87,8 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         }
         let pattern = match variant.fields {
             Fields::Unit => quote!(Self::#variant_name),
-            _ => quote!(Self::#variant_name { .. }),
+            Fields::Named(_) => quote!(Self::#variant_name { .. }),
+            Fields::Unnamed(_) => quote!(Self::#variant_name(..)),
         };
         let Declaration {
             type_uri,
@@ -146,31 +138,45 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
         definition_iter = quote!(::std::iter::Iterator::chain(#definition_iter, ::std::iter::once(&Self::#constant)));
 
         if let Some(detail) = detail {
-            let fields = detail_fields(&detail)?;
+            let tuple = matches!(variant.fields, Fields::Unnamed(_));
+            let (detail, fields) = detail_fields(&detail, tuple)?;
             let mut bindings = Vec::new();
+            let mut tuple_bindings = vec![quote!(_); variant.fields.len()];
             for (field_name, traits) in fields {
-                let field = variant
-                    .fields
-                    .iter()
-                    .find(|field| {
+                let field = if tuple {
+                    variant
+                        .fields
+                        .iter()
+                        .nth(field_name.parse::<usize>().unwrap())
+                } else {
+                    variant.fields.iter().find(|field| {
                         field
                             .ident
                             .as_ref()
                             .is_some_and(|ident| ident.unraw() == &field_name)
                     })
-                    .ok_or_else(|| {
-                        syn::Error::new(
-                            detail.span(),
-                            format!("unknown detail field `{field_name}`"),
-                        )
-                    })?;
+                }
+                .ok_or_else(|| {
+                    syn::Error::new(
+                        detail.span(),
+                        format!("unknown detail field `{field_name}`"),
+                    )
+                })?;
                 if is_source(field) {
                     return Err(syn::Error::new(
                         detail.span(),
                         "diagnostic sources cannot be formatted into public detail",
                     ));
                 }
-                bindings.push(field.ident.as_ref().expect("named fields checked above"));
+                let binding = if tuple {
+                    let binding =
+                        Ident::new(&format!("__problem_field_{field_name}"), detail.span());
+                    tuple_bindings[field_name.parse::<usize>().unwrap()] = quote!(#binding);
+                    binding
+                } else {
+                    field.ident.clone().expect("named fields checked above")
+                };
+                bindings.push(binding);
                 let ty = &field.ty;
                 for trait_name in traits {
                     let format_trait = Ident::new(trait_name, detail.span());
@@ -182,6 +188,8 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             }
             let detail_pattern = if bindings.is_empty() {
                 pattern.clone()
+            } else if tuple {
+                quote!(Self::#variant_name(#(#tuple_bindings),*))
             } else {
                 quote!(Self::#variant_name { #(#bindings),*, .. })
             };
