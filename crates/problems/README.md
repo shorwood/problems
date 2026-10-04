@@ -45,7 +45,8 @@ enum CreateFlowProblem {
 
 let report = CreateFlowProblem::NameConflict {
     name: "monthly-report".into(),
-}.into_report();
+}
+.into_report();
 
 assert_eq!(report.problem().definition().status, 409);
 let body = serde_json::to_value(report.details())?;
@@ -69,7 +70,10 @@ enum MyProblem {
     NotFound,
 }
 
-assert_eq!(MyProblem::NotFound.definition().type_uri, "urn:example:not-found");
+assert_eq!(
+    MyProblem::NotFound.definition().type_uri,
+    "urn:example:not-found"
+);
 ```
 
 The macro uses `heck` to convert variant identifiers to kebab case at compile
@@ -139,7 +143,10 @@ use std::path::Path;
 #[derive(Debug, thiserror::Error, problems::Problem)]
 enum AppProblem {
     #[error("failed to read file: {cause}")]
-    #[problem(type_uri = "urn:example:read-failed", title = "Internal server error")]
+    #[problem(
+        type_uri = "urn:example:read-failed",
+        title = "Internal server error"
+    )]
     ReadFailed {
         #[from]
         cause: std::io::Error,
@@ -193,7 +200,11 @@ use problems::{IntoReport, Report};
 
 #[derive(Debug, thiserror::Error, problems::Problem)]
 enum CreateFlowProblem {
-    #[problem(type_uri = "urn:nanoworks:problem:flow-name-conflict", status = 409, title = "Flow name already exists")]
+    #[problem(
+        type_uri = "urn:nanoworks:problem:flow-name-conflict",
+        status = 409,
+        title = "Flow name already exists"
+    )]
     #[error("name conflict")]
     NameConflict,
 }
@@ -263,6 +274,84 @@ Keep `Result<T, Report<E>>` when Aide needs these declared statuses. Returning
 only `impl IntoResponse` hides the report's `OperationOutput` implementation;
 the Axum response bound alone does not expose OpenAPI metadata.
 
+### Framework error boundaries
+
+Adapters render reports explicitly produced by the application. They do not
+intercept extractor rejections, middleware responses, or missing routes. For
+example, Axum normally rejects malformed JSON with a plain-text 400 response
+before calling a handler that takes `Json<T>`.
+
+Define an application-owned `ProblemJson<T>` extractor to share an explicit
+classification policy across handlers. Delegate parsing to Axum’s `Json<T>`,
+keep framework diagnostics in the source chain, and choose the public explanation:
+
+```rust
+# fn main() {
+# #[cfg(feature = "axum")]
+# {
+use axum::{
+    Json,
+    extract::{FromRequest, Request, rejection::JsonRejection},
+    response::{IntoResponse, Response},
+};
+use problems::IntoReport;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+enum RequestProblem {
+    #[error("JSON extraction failed: {source}")]
+    #[problem(
+        type_uri = "urn:example:malformed-json",
+        status = 400,
+        title = "Malformed JSON",
+        detail = "The request body must contain valid JSON."
+    )]
+    MalformedJson { source: JsonRejection },
+}
+
+struct ProblemJson<T>(T);
+
+impl<T, S> FromRequest<S> for ProblemJson<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(request, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            Err(source @ JsonRejection::JsonSyntaxError(_)) => Err(
+                RequestProblem::MalformedJson { source }
+                    .into_report()
+                    .into_response(),
+            ),
+            Err(rejection) => Err(rejection.into_response()),
+        }
+    }
+}
+
+async fn create(ProblemJson(value): ProblemJson<serde_json::Value>) -> Json<serde_json::Value> {
+    Json(value)
+}
+
+# let _router = axum::Router::<()>::new().route("/create", axum::routing::post(create));
+# }
+# }
+```
+
+This recipe changes only JSON syntax failures. Other extraction rejections,
+such as missing JSON content type, retain their framework responses. Delegating
+to `Json<T>` also preserves Axum’s body limits. Handlers opt in by taking
+`ProblemJson<T>` as their final parameter because it consumes the request body.
+This type belongs to the application, not the library. The Axum example compares
+`POST /json` with `POST /json-problem`.
+
+See [Axum’s custom extractor guidance](https://docs.rs/axum/latest/axum/extract/index.html#customizing-extractor-responses).
+
+Router fallbacks and middleware require their own explicit classification at
+the framework's handling points. The same principle applies to all adapters:
+choose a declared problem where the failure is handled, then render its report.
+
 ## Framework examples
 
 ### Combining problem enums
@@ -300,8 +389,13 @@ enum HandlerProblem {
     Storage(#[from] StorageProblem),
 }
 
-fn authenticate() -> Result<(), AuthProblem> { Ok(()) }
-fn store() -> Result<(), StorageProblem> { Ok(()) }
+fn authenticate() -> Result<(), AuthProblem> {
+    Ok(())
+}
+
+fn store() -> Result<(), StorageProblem> {
+    Ok(())
+}
 
 fn operation() -> Result<(), HandlerProblem> {
     authenticate()?;
@@ -313,8 +407,12 @@ async fn handler() -> Result<(), Report<HandlerProblem>> {
     operation().map_err(IntoReport::into_report)
 }
 
-assert_eq!(HandlerProblem::definitions().map(|d| d.status.as_u16())
-    .collect::<Vec<_>>(), [401, 503]);
+assert_eq!(
+    HandlerProblem::definitions()
+        .map(|definition| definition.status.as_u16())
+        .collect::<Vec<_>>(),
+    [401, 503]
+);
 ```
 
 `#[error(transparent)]` controls diagnostic forwarding; `#[problem(transparent)]`
@@ -358,15 +456,15 @@ async fn create() -> Result<(), AppProblem> {
 }
 
 async fn create_handler() -> Result<&'static str, Rejection> {
-    create().await.map_err(|problem| {
-        warp::reject::custom(AppRejection(problem.into_report()))
-    })?;
+    create()
+        .await
+        .map_err(|problem| warp::reject::custom(AppRejection(problem.into_report())))?;
     Ok("created")
 }
 
-async fn recover_problem(rejection: Rejection)
-    -> Result<warp::reply::Response, Rejection>
-{
+async fn recover_problem(
+    rejection: Rejection,
+) -> Result<warp::reply::Response, Rejection> {
     if let Some(problem) = rejection.find::<AppRejection>() {
         return Ok((&problem.0).into_response());
     }

@@ -1,5 +1,6 @@
 //! Run with `cargo run -p problems --example axum --features axum`.
 //! Request `GET http://127.0.0.1:3000/problem` to see the public conflict document.
+//! Compare malformed JSON sent to `POST /json` and `POST /json-problem`.
 
 use problems::{IntoReport, Report};
 
@@ -15,7 +16,56 @@ enum CreateProblem {
     NameConflict { name: String },
 }
 
-use axum::{Router, routing::get};
+use axum::{
+    Json, Router,
+    extract::{FromRequest, Request, rejection::JsonRejection},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+enum RequestProblem {
+    #[error("JSON extraction failed: {source}")]
+    #[problem(
+        type_uri = "urn:example:malformed-json",
+        status = 400,
+        title = "Malformed JSON",
+        detail = "The request body must contain valid JSON."
+    )]
+    MalformedJson { source: JsonRejection },
+}
+
+async fn default_json(payload: Json<serde_json::Value>) -> Json<serde_json::Value> {
+    payload
+}
+
+struct ProblemJson<T>(T);
+
+impl<T, S> FromRequest<S> for ProblemJson<T>
+where
+    T: serde::de::DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(request, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            Err(source @ JsonRejection::JsonSyntaxError(_)) => {
+                Err(RequestProblem::MalformedJson { source }
+                    .into_report()
+                    .into_response())
+            }
+            Err(rejection) => Err(rejection.into_response()),
+        }
+    }
+}
+
+async fn problem_json(
+    ProblemJson(value): ProblemJson<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    Json(value)
+}
 
 async fn problem() -> Result<(), Report<CreateProblem>> {
     Err(CreateProblem::NameConflict {
@@ -25,7 +75,10 @@ async fn problem() -> Result<(), Report<CreateProblem>> {
 }
 
 fn app() -> Router {
-    Router::new().route("/problem", get(problem))
+    Router::new()
+        .route("/problem", get(problem))
+        .route("/json", post(default_json))
+        .route("/json-problem", post(problem_json))
 }
 
 #[cfg(test)]
@@ -48,6 +101,125 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn default_json_rejection_is_plain_text() -> Result<(), Box<dyn std::error::Error>> {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/json")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{"))?,
+            )
+            .await?;
+        assert_eq!(response.status(), 400);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/plain; charset=utf-8"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_explicitly_classified() -> Result<(), Box<dyn std::error::Error>> {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/json-problem")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{"))?,
+            )
+            .await?;
+        assert_eq!(response.status(), 400);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/problem+json"
+        );
+        let body = to_bytes(response.into_body(), 4096).await?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body)?,
+            serde_json::json!({
+                "type": "urn:example:malformed-json", "title": "Malformed JSON", "status": 400,
+                "detail": "The request body must contain valid JSON."
+            })
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn successful_json_extraction_is_unchanged() -> Result<(), Box<dyn std::error::Error>> {
+        for path in ["/json", "/json-problem"] {
+            let response = app()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"name":"example"}"#))?,
+                )
+                .await?;
+            assert_eq!(response.status(), 200);
+            assert_eq!(response.headers()["content-type"], "application/json");
+            let body = to_bytes(response.into_body(), 4096).await?;
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body)?,
+                serde_json::json!({"name":"example"})
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn other_json_rejections_are_unchanged() -> Result<(), Box<dyn std::error::Error>> {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/json-problem")
+                    .body(Body::from("{}"))?,
+            )
+            .await?;
+        assert_eq!(response.status(), 415);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/plain; charset=utf-8"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn body_limit_is_preserved() -> Result<(), Box<dyn std::error::Error>> {
+        for path in ["/json", "/json-problem"] {
+            let response = app()
+                .layer(axum::extract::DefaultBodyLimit::max(8))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"name":"example"}"#))?,
+                )
+                .await?;
+            assert_eq!(response.status(), 413);
+            assert_eq!(
+                response.headers()["content-type"],
+                "text/plain; charset=utf-8"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn missing_route_is_unchanged() -> Result<(), Box<dyn std::error::Error>> {
+        let response = app()
+            .oneshot(Request::builder().uri("/missing").body(Body::empty())?)
+            .await?;
+        assert_eq!(response.status(), 404);
+        assert!(to_bytes(response.into_body(), 4096).await?.is_empty());
+        Ok(())
+    }
 
     #[tokio::test]
     async fn opaque_response() -> Result<(), Box<dyn std::error::Error>> {
