@@ -76,6 +76,13 @@ assert_eq!(
 );
 ```
 
+The derive also exposes each locally declared variant's `ProblemDefinition`
+as an associated constant in SHOUTY_SNAKE_CASE: `NameConflict` becomes
+`NAME_CONFLICT`. Instance lookup and the definition iterator reuse these constants.
+Generated names must be distinct and cannot conflict with an enum variant or an
+existing associated item. Transparent variants expose no single definition;
+refer to the wrapped enum's constants instead.
+
 The macro uses `heck` to convert variant identifiers to kebab case at compile
 time. A colon is inserted unless the prefix already ends in `:` or `/`:
 `urn:example:` and `https://example.com/problems/` both work as written.
@@ -185,6 +192,31 @@ assert_eq!(problem.detail(), Some("Choose another name."));
 assert_eq!(problem.instance(), Some("/occurrences/123"));
 # Ok::<(), serde_json::Error>(())
 ```
+
+Compare a received type with a variant's definition without constructing its
+fields or diagnostic source:
+
+```rust
+use problems::GenericProblem;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum CreateProblem {
+    #[error("private diagnostic: {source}")]
+    #[problem(409)]
+    NameConflict { source: std::io::Error },
+}
+
+let received: GenericProblem = serde_json::from_str(
+    r#"{"type":"urn:example:name-conflict"}"#,
+)?;
+assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
+# Ok::<(), serde_json::Error>(())
+```
+
+`is_type` compares only the type URI. Title, status, detail, instance, and
+private diagnostics do not affect this identity check. Relative received URI
+references require resolution before comparing them with declared identities.
 
 The document owns its strings and remains usable after dropping the response
 buffer. Missing `type` defaults to `about:blank`; other missing members return

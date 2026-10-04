@@ -1,3 +1,4 @@
+use heck::ToShoutySnakeCase;
 use proc_macro2::TokenStream as Tokens;
 use quote::quote;
 use std::collections::BTreeSet;
@@ -26,6 +27,8 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
     let mut type_uris = BTreeSet::new();
     let name = &input.ident;
     let mut definition_arms = Vec::new();
+    let mut definition_constants = Vec::new();
+    let mut constant_names = BTreeSet::new();
     let mut detail_arms = Vec::new();
     let mut instance_arms = Vec::new();
     let mut definition_iter = quote!(::std::iter::empty::<&'static #runtime::ProblemDefinition>());
@@ -115,10 +118,32 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
             status: #status,
             title: #title,
         });
-        definition_arms.push(quote!(#pattern => &#definition));
+        let constant_name = variant_name.unraw().to_string().to_shouty_snake_case();
+        if !constant_names.insert(constant_name.clone()) {
+            return Err(syn::Error::new(
+                variant_name.span(),
+                "problem variants generate the same definition constant name",
+            ));
+        }
+        if data
+            .variants
+            .iter()
+            .any(|v| v.ident.unraw() == constant_name)
+        {
+            return Err(syn::Error::new(
+                variant_name.span(),
+                "generated problem definition constant conflicts with an enum variant",
+            ));
+        }
+        let constant = Ident::new(&constant_name, variant_name.span());
+        let documentation = format!("Public problem definition for `{variant_name}`.");
+        definition_constants.push(quote! {
+            #[doc = #documentation]
+            pub const #constant: #runtime::ProblemDefinition = #definition;
+        });
+        definition_arms.push(quote!(#pattern => &Self::#constant));
         instance_arms.push(quote!(#pattern => ::std::option::Option::None));
-        definition_iter =
-            quote!(::std::iter::Iterator::chain(#definition_iter, ::std::iter::once(&#definition)));
+        definition_iter = quote!(::std::iter::Iterator::chain(#definition_iter, ::std::iter::once(&Self::#constant)));
 
         if let Some(detail) = detail {
             let fields = detail_fields(&detail)?;
@@ -171,8 +196,13 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
     } else {
         quote!(self)
     };
+    let (constant_impl_generics, constant_type_generics, constant_where_clause) =
+        input.generics.split_for_impl();
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
     Ok(quote! {
+        impl #constant_impl_generics #name #constant_type_generics #constant_where_clause {
+            #(#definition_constants)*
+        }
         impl #impl_generics #runtime::Problem for #name #type_generics #where_clause {
             fn definition(&self) -> &'static #runtime::ProblemDefinition {
                 match #instance { #(#definition_arms),* }

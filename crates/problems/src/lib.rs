@@ -63,6 +63,8 @@ pub struct ProblemDefinition {
 /// the variant name in Title Case, such as `NameConflict` becoming `Name Conflict`.
 /// An enum prefix generates type URIs from kebab-case variant names. Explicit
 /// variant `type_uri` declarations override it; without a prefix they are required.
+/// Each locally declared variant exposes a definition constant in SHOUTY_SNAKE_CASE,
+/// such as `NAME_CONFLICT`. Transparent variants use their wrapped definitions.
 /// Prefixes ending in `:` or `/` are used directly; otherwise a colon is appended.
 /// Generated URIs change when variants are renamed. Keep an explicit URI when
 /// renaming a variant must preserve its public identity. Duplicate locally declared
@@ -277,6 +279,14 @@ fn deserialize_status<'de, D: Deserializer<'de>>(
 }
 
 impl GenericProblem {
+    /// Compare the received problem identity with a declared definition.
+    ///
+    /// Compares only the type URI, not occurrence data or diagnostics. Relative
+    /// received references must be resolved by the caller before comparison.
+    pub fn is_type(&self, definition: &ProblemDefinition) -> bool {
+        self.type_uri == definition.type_uri
+    }
+
     /// Problem identity, defaulting to `about:blank` when unavailable.
     pub fn type_uri(&self) -> &str {
         &self.type_uri

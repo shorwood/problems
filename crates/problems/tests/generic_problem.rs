@@ -124,3 +124,24 @@ fn producer_conversion_moves_present_detail() {
     assert_eq!(document.detail(), Some("Public explanation"));
     assert_eq!(document.detail().unwrap().as_ptr(), allocation);
 }
+
+#[cfg(feature = "derive")]
+#[test]
+fn matches_variant_definition_without_constructing_error() {
+    #[derive(Debug, thiserror::Error, problems::Problem)]
+    #[problem(prefix = "urn:test")]
+    #[allow(dead_code)]
+    enum Local {
+        #[error("private: {source}")]
+        #[problem(409)]
+        NameConflict { source: std::io::Error },
+        #[error("private")]
+        #[problem(404)]
+        Missing,
+    }
+    let document: GenericProblem = serde_json::from_str(
+        r#"{"type":"urn:test:name-conflict","title":"Other title","status":500,"instance":"urn:test:occurrence"}"#,
+    ).unwrap();
+    assert!(document.is_type(&Local::NAME_CONFLICT));
+    assert!(!document.is_type(&Local::MISSING));
+}
