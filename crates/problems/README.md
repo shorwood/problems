@@ -763,10 +763,62 @@ cargo test -p problems --examples --all-features
 ## Diagnostics
 
 Use `thiserror`, `miette`, or handwritten error implementations for diagnostic
-formatting and source chains. `Report<E>` retains the error and exposes it through
-`Report::problem()` or `Report::into_problem()`. With `actix-web` enabled, the
-wrapper implements `Display` by forwarding to the original error, as required
-by Actix Web's `ResponseError` trait. The wrapper never implements `Error`.
+formatting and source chains. Add Miette to your application with its `derive`
+feature; the same error can declare both diagnostics and public problem metadata:
+
+```rust
+use miette::Diagnostic;
+use problems::IntoReport;
+use std::error::Error;
+
+#[derive(Debug, thiserror::Error, miette::Diagnostic, problems::Problem)]
+#[error("storage operation failed")]
+#[diagnostic(code(app::storage), help("Check the storage service logs."))]
+#[problem(type_uri = "urn:example:storage",
+          detail = "Unable to save the resource.")]
+struct StorageFailure {
+    #[source]
+    source: std::io::Error,
+}
+
+let report = StorageFailure {
+    source: std::io::Error::other("private storage diagnostic"),
+}
+.into_report()
+.with_instance("urn:request:42");
+
+// Borrow diagnostic information while retaining the HTTP report.
+assert_eq!(report.problem().to_string(), "storage operation failed");
+assert!(report.problem().source().is_some());
+assert_eq!(report.problem().code().unwrap().to_string(), "app::storage");
+
+// Keep the public document before moving the original error into Miette.
+let document = report.details();
+let diagnostic = miette::Report::new(report.into_problem());
+assert!(diagnostic.downcast_ref::<StorageFailure>().is_some());
+assert!(diagnostic.chain().any(|cause| cause.is::<std::io::Error>()));
+assert_eq!(document.detail(), Some("Unable to save the resource."));
+assert_eq!(document.instance(), Some("urn:request:42"));
+```
+
+`problem()` borrows the original error. `into_problem()` consumes the HTTP report,
+moves out that error, and discards attached report context such as `instance`.
+Project with `details()` first when you need both the public document and an owned
+diagnostic report. This requires no `Clone` implementation. Miette's
+[`Report::new`](https://docs.rs/miette/latest/miette/struct.Report.html#method.new)
+requires the original error to implement `Diagnostic + Send + Sync + 'static`.
+The HTTP wrapper implements neither `std::error::Error` nor `miette::Diagnostic`;
+pass its underlying error to Miette.
+
+For diagnostic text, format `report.problem()` in every feature configuration.
+Formatting `report` itself with `{}` is available only with `actix-web`, which
+adds forwarding `Display` to satisfy
+[`ResponseError`](https://docs.rs/actix-web/latest/actix_web/error/trait.ResponseError.html).
+`Debug` remains available for the wrapper. Cargo
+[feature unification](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification)
+can enable Actix support through another consumer of the same package, so do not
+rely on wrapper `Display` in code intended to work without that feature.
+Diagnostic messages, help, codes, and source chains do not enter the HTTP body.
 
 The application decides when to log, which severity to use, and how to enrich
 spans. Conversions, serialization, documentation, and HTTP response generation
