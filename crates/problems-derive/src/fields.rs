@@ -13,6 +13,7 @@ pub(crate) fn is_source(field: &syn::Field) -> bool {
     field.ident.as_ref().is_some_and(|name| name == "source")
         || field.attrs.iter().any(|attribute| {
             attribute.path().is_ident("source")
+                || attribute.path().is_ident("from")
                 || (attribute.path().is_ident("error")
                     && has_source_token(attribute.meta.to_token_stream()))
         })

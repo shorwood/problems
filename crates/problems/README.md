@@ -89,7 +89,7 @@ contract. Formatting a field into detail does not expose it as a separate member
 
 The document contains only `type`, `title`, `status`, optional `detail`, and
 optional `instance`. Other error fields remain diagnostic. Source fields
-(named `source`, or marked `#[source]` / `#[error(source)]`) cannot be formatted
+(named `source`, or marked `#[source]` / `#[from]` / `#[error(source)]`) cannot be formatted
 into public detail. The derive supports unit and named-field enum variants.
 
 `Report::from(error)` and `error.into_report()` retain the same typed error.
