@@ -234,6 +234,25 @@ HTTP adapters use consuming projection; borrowed adapters and Actix's
 comes from the original error. `into_problem()` recovers that error and discards
 the attached occurrence context.
 
+## Localization
+
+Clients can map the problem's `type` URI to localized messages in their own
+translation catalog. Keep server declarations stable and use `type` as the
+machine-readable identifier; titles and details are human-readable text, not
+translation keys. Resolve relative type references before looking up their
+identity, as described below.
+
+For example, a client receiving `urn:example:name-conflict` can display its
+localized name-conflict message regardless of the server's title. The application
+owns translations and fallback behavior for unknown problem types. Field-level
+validation codes require an explicit structured response contract, rather than
+parsing `detail` for message parameters.
+
+[RFC 9457 permits server-side title localization](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.3),
+but does not require it. This library provides no locale negotiation or translation
+API. Its static definitions describe server responses; client translations do not
+add definitions or change OpenAPI declarations.
+
 ## Structured validation responses
 
 `Report` projects only `type`, `title`, `status`, optional `detail`, and optional
