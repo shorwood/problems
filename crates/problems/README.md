@@ -218,6 +218,13 @@ assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
 private diagnostics do not affect this identity check. Relative received URI
 references require resolution before comparing them with declared identities.
 
+Both document types implement `PartialEq` and `Eq`. Equality compares all five
+public members, including `instance`, and works between `GenericProblem` and
+`ProblemDetails` in either direction. For repeated failures, use
+`received.matches(&report.details())`: it compares type, title, status, and detail
+while ignoring only `instance`. Missing members are not wildcards; an omitted
+detail differs from an empty string. `is_type()` remains the identity-only check.
+
 The document owns its strings and remains usable after dropping the response
 buffer. Missing `type` defaults to `about:blank`; other missing members return
 `None`. Unknown extensions are discarded. Decoding uses ordinary Serde type

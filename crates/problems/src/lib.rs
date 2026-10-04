@@ -130,9 +130,10 @@ pub trait Problem: Error {
 /// Details of an HTTP API error, following RFC 9457.
 ///
 /// Identifies the problem type and describes the individual occurrence.
-/// Optional members are omitted when unavailable.
+/// Optional members are omitted when unavailable. Equality compares all five
+/// public members, including the occurrence URI.
 #[must_use]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "aide", derive(schemars::JsonSchema))]
 pub struct ProblemDetails {
     /// URI reference identifying the problem type.
@@ -231,10 +232,13 @@ impl<E: Problem> From<&Report<E>> for ProblemDetails {
 /// incorrectly typed members fail decoding rather than being ignored as RFC 9457
 /// prescribes. Status values must be integers within 100–999.
 ///
+/// Equality compares all five public members, including the occurrence URI.
+/// `matches()` compares public failure data while ignoring that URI.
+///
 /// This document retains neither diagnostic sources nor static definitions. It
 /// does not implement `Problem` or framework response traits.
 #[must_use]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct GenericProblem {
     /// URI reference identifying the received problem type.
     ///
@@ -283,8 +287,90 @@ impl GenericProblem {
     ///
     /// Compares only the type URI, not occurrence data or diagnostics. Relative
     /// received references must be resolved by the caller before comparison.
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "derive")]
+    /// # {
+    /// use problems::GenericProblem;
+    ///
+    /// #[derive(Debug, thiserror::Error, problems::Problem)]
+    /// #[problem(prefix = "urn:example")]
+    /// enum CreateProblem {
+    ///     #[error("private diagnostic: {source}")]
+    ///     #[problem(409)]
+    ///     NameConflict { source: std::io::Error },
+    ///     #[error("resource missing")]
+    ///     #[problem(404)]
+    ///     Missing,
+    /// }
+    ///
+    /// let received: GenericProblem = serde_json::from_value(serde_json::json!({
+    ///     "type": "urn:example:name-conflict"
+    /// }))?;
+    ///
+    /// // Identify the variant without constructing its diagnostic source.
+    /// assert!(received.is_type(&CreateProblem::NAME_CONFLICT));
+    /// assert!(!received.is_type(&CreateProblem::MISSING));
+    /// # }
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
     pub fn is_type(&self, definition: &ProblemDefinition) -> bool {
         self.type_uri == definition.type_uri
+    }
+
+    /// Compare public failure data with a producer document, ignoring instance.
+    ///
+    /// Type URI, title, status, and detail must match exactly. Missing members
+    /// are not wildcards. Use `==` to compare the occurrence URI as well.
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "derive")]
+    /// # {
+    /// use problems::{GenericProblem, IntoReport};
+    ///
+    /// #[derive(Debug, thiserror::Error, problems::Problem)]
+    /// #[problem(prefix = "urn:example")]
+    /// enum CreateProblem {
+    ///     #[error("private diagnostic: {name}")]
+    ///     #[problem(status = 409, detail = "The name '{name}' is already in use.")]
+    ///     NameConflict { name: String },
+    /// }
+    ///
+    /// let expected = CreateProblem::NameConflict {
+    ///     name: "monthly".into(),
+    /// }
+    /// .into_report()
+    /// .with_instance("/occurrences/1")
+    /// .into_details();
+    ///
+    /// let received: GenericProblem = serde_json::from_value(serde_json::json!({
+    ///     "type": "urn:example:name-conflict",
+    ///     "title": "Name Conflict",
+    ///     "status": 409,
+    ///     "detail": "The name 'monthly' is already in use.",
+    ///     "instance": "/occurrences/2"
+    /// }))?;
+    ///
+    /// // The same failure occurred twice, with different occurrence URIs.
+    /// assert!(received.matches(&expected));
+    /// assert_ne!(received, expected);
+    ///
+    /// let different_name = CreateProblem::NameConflict {
+    ///     name: "weekly".into(),
+    /// }
+    /// .into_report()
+    /// .into_details();
+    ///
+    /// // Detail participates in matching: "weekly" differs from "monthly".
+    /// assert!(!received.matches(&different_name));
+    /// # }
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    pub fn matches(&self, details: &ProblemDetails) -> bool {
+        self.type_uri == details.type_uri
+            && self.title() == Some(details.title)
+            && self.status == Some(details.status)
+            && self.detail() == details.detail()
     }
 
     /// Problem identity, defaulting to `about:blank` when unavailable.
@@ -314,6 +400,20 @@ impl GenericProblem {
     /// Relative references remain unresolved; the caller supplies the base URI.
     pub fn instance(&self) -> Option<&str> {
         self.instance.as_deref()
+    }
+}
+
+impl PartialEq<ProblemDetails> for GenericProblem {
+    /// Compare every public member without allocating or projecting an error.
+    fn eq(&self, details: &ProblemDetails) -> bool {
+        self.matches(details) && self.instance() == details.instance()
+    }
+}
+
+impl PartialEq<GenericProblem> for ProblemDetails {
+    /// Compare every public member using the same rule in either direction.
+    fn eq(&self, received: &GenericProblem) -> bool {
+        received == self
     }
 }
 
