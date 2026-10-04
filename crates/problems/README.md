@@ -111,6 +111,42 @@ public document without reporting the error. Definitions use `StatusCode`, so
 conversion is infallible. The derive accepts only integer status literals from 100 through 999, such as `status = 409`. Constant paths and other expressions are rejected.
 Omitting `status` defaults to `StatusCode::INTERNAL_SERVER_ERROR` (500). The document remains usable after dropping the report.
 
+Attach an occurrence URI at the HTTP boundary without adding request context
+to the original error:
+
+```rust
+use problems::IntoReport;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+#[problem(prefix = "urn:example")]
+enum AppProblem {
+    #[error("private storage diagnostic")]
+    #[problem(503)]
+    Unavailable,
+}
+
+let report = AppProblem::Unavailable
+    .into_report()
+    .with_instance("urn:uuid:550e8400-e29b-41d4-a716-446655440000");
+
+let details = report.into_details();
+let body = serde_json::to_value(details)?;
+assert_eq!(body["instance"], "urn:uuid:550e8400-e29b-41d4-a716-446655440000");
+# Ok::<(), serde_json::Error>(())
+```
+
+`with_instance` owns its string and overrides `Problem::instance()` for public
+projection. Without an override, the error's instance is preserved; if neither
+supplies one, the member is omitted. The caller supplies a valid URI reference
+identifying this occurrence ([RFC 9457, section 3.1.5](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1.5)).
+
+`details()` retains the report and clones an attached instance into the owned
+document. `into_details()` consumes the report and moves that string. Owned
+HTTP adapters use consuming projection; borrowed adapters and Actix's
+`error_response(&self)` use borrowing projection. Diagnostic formatting still
+comes from the original error. `into_problem()` recovers that error and discards
+the attached occurrence context.
+
 ## Features
 
 The `derive` feature is enabled by default. Set `default-features = false` to

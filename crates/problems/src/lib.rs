@@ -192,7 +192,7 @@ impl<E: Problem> From<&Report<E>> for ProblemDetails {
             title: definition.title,
             status: definition.status.as_u16(),
             detail: problem.detail(),
-            instance: problem.instance(),
+            instance: report.instance.clone().or_else(|| problem.instance()),
         }
     }
 }
@@ -210,12 +210,38 @@ impl<E: Problem> From<&Report<E>> for ProblemDetails {
 #[derive(Debug)]
 pub struct Report<E: Problem> {
     problem: E,
+    instance: Option<String>,
 }
 
 impl<E: Problem> Report<E> {
     /// Retain the original error and its declaration type.
     pub const fn new(problem: E) -> Self {
-        Self { problem }
+        Self {
+            problem,
+            instance: None,
+        }
+    }
+
+    /// Attach a URI reference identifying this occurrence.
+    /// Overrides the error's instance without changing the original error.
+    /// The caller is responsible for supplying a valid URI reference.
+    pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
+        self.instance = Some(instance.into());
+        self
+    }
+
+    /// Consume the report and construct an owned public document.
+    /// Moves the attached instance rather than cloning it. The original error
+    /// is dropped; inspect diagnostics before consuming the report.
+    pub fn into_details(self) -> ProblemDetails {
+        let definition = self.problem.definition();
+        ProblemDetails {
+            type_uri: definition.type_uri,
+            title: definition.title,
+            status: definition.status.as_u16(),
+            detail: self.problem.detail(),
+            instance: self.instance.or_else(|| self.problem.instance()),
+        }
     }
 
     /// Borrow the original error, including its diagnostic source chain.
@@ -224,6 +250,7 @@ impl<E: Problem> Report<E> {
     }
 
     /// Recover the original error without reporting it.
+    /// Any instance attached to the report is discarded.
     pub fn into_problem(self) -> E {
         self.problem
     }
@@ -303,7 +330,7 @@ impl<E: Problem> IntoReport for E {}
 impl<E: Problem> IntoResponse for Report<E> {
     /// Consumes the report and renders its declared public response.
     fn into_response(self) -> axum::response::Response {
-        axum_response(&self)
+        axum_response(self.problem().definition().status, self.into_details())
     }
 }
 
@@ -311,14 +338,12 @@ impl<E: Problem> IntoResponse for Report<E> {
 impl<E: Problem> IntoResponse for &Report<E> {
     /// Renders an owned response while retaining the original error.
     fn into_response(self) -> axum::response::Response {
-        axum_response(self)
+        axum_response(self.problem().definition().status, self.details())
     }
 }
 
 #[cfg(feature = "axum")]
-fn axum_response<E: Problem>(report: &Report<E>) -> axum::response::Response {
-    let details = report.details();
-    let status = report.problem().definition().status;
+fn axum_response(status: StatusCode, details: ProblemDetails) -> axum::response::Response {
     let headers = [(CONTENT_TYPE, "application/problem+json")];
     (status, headers, Json(details)).into_response()
 }
@@ -359,7 +384,7 @@ impl<E: Problem> actix_web::ResponseError for Report<E> {
 impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for Report<E> {
     /// Consumes the report and builds an owned public response.
     fn respond_to(self, request: &'r rocket::Request<'_>) -> rocket::response::Result<'static> {
-        rocket_response(&self, request)
+        rocket_response(self.into_details(), request)
     }
 }
 
@@ -367,19 +392,18 @@ impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for Report<E> {
 impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for &Report<E> {
     /// Builds a response whose body does not borrow the original report.
     fn respond_to(self, request: &'r rocket::Request<'_>) -> rocket::response::Result<'static> {
-        rocket_response(self, request)
+        rocket_response(self.details(), request)
     }
 }
 
 #[cfg(feature = "rocket")]
-fn rocket_response<E: Problem>(
-    report: &Report<E>,
+fn rocket_response(
+    details: ProblemDetails,
     request: &rocket::Request<'_>,
 ) -> rocket::response::Result<'static> {
     use rocket::response::Responder;
 
     // --- Let Rocket serialize the owned public document.
-    let details = report.details();
     let status = rocket::http::Status::new(details.status());
 
     // --- Preserve its body while setting the declared status and problem media type.
@@ -400,7 +424,7 @@ fn rocket_response<E: Problem>(
 impl<E: Problem + Send> poem::IntoResponse for Report<E> {
     /// Consumes the report and renders its declared public response.
     fn into_response(self) -> poem::Response {
-        poem_response(&self)
+        poem_response(self.problem().definition().status, self.into_details())
     }
 }
 
@@ -408,17 +432,16 @@ impl<E: Problem + Send> poem::IntoResponse for Report<E> {
 impl<E: Problem + Sync> poem::IntoResponse for &Report<E> {
     /// Renders an owned response without consuming the diagnostic error.
     fn into_response(self) -> poem::Response {
-        poem_response(self)
+        poem_response(self.problem().definition().status, self.details())
     }
 }
 
 #[cfg(feature = "poem")]
-fn poem_response<E: Problem>(report: &Report<E>) -> poem::Response {
+fn poem_response(status: StatusCode, details: ProblemDetails) -> poem::Response {
     use poem::IntoResponse;
-    let details = report.details();
     poem::IntoResponse::into_response(
         poem::web::Json(details)
-            .with_status(report.problem().definition().status)
+            .with_status(status)
             .with_content_type("application/problem+json"),
     )
 }
@@ -436,7 +459,10 @@ impl<E: Problem + Send> From<Report<E>> for poem::Error {
 impl<E: Problem + Sync> From<&Report<E>> for poem::Error {
     /// Retains only the public response in the Poem error; leaves the report available.
     fn from(report: &Report<E>) -> Self {
-        Self::from_response(poem_response(report))
+        Self::from_response(poem_response(
+            report.problem().definition().status,
+            report.details(),
+        ))
     }
 }
 
@@ -448,7 +474,11 @@ impl<E: Problem + Sync> From<&Report<E>> for poem::Error {
 impl<E: Problem> salvo::Scribe for Report<E> {
     /// Consumes the report and writes its declared public response.
     fn render(self, response: &mut salvo::Response) {
-        salvo_response(&self, response);
+        salvo_response(
+            self.problem().definition().status,
+            self.into_details(),
+            response,
+        );
     }
 }
 
@@ -456,15 +486,15 @@ impl<E: Problem> salvo::Scribe for Report<E> {
 impl<E: Problem> salvo::Scribe for &Report<E> {
     /// Writes public details while retaining the original report.
     fn render(self, response: &mut salvo::Response) {
-        salvo_response(self, response);
+        salvo_response(self.problem().definition().status, self.details(), response);
     }
 }
 
 #[cfg(feature = "salvo")]
-fn salvo_response<E: Problem>(report: &Report<E>, response: &mut salvo::Response) {
+fn salvo_response(status: StatusCode, details: ProblemDetails, response: &mut salvo::Response) {
     // --- Render the public document using Salvo's JSON writer.
-    response.status_code(report.problem().definition().status);
-    salvo::Scribe::render(salvo::writing::Json(report.details()), response);
+    response.status_code(status);
+    salvo::Scribe::render(salvo::writing::Json(details), response);
     // --- Replace the JSON writer's media type with the problem media type.
     response.headers_mut().insert(
         http::header::CONTENT_TYPE,
@@ -480,7 +510,7 @@ fn salvo_response<E: Problem>(report: &Report<E>, response: &mut salvo::Response
 impl<E: Problem + Send> warp::Reply for Report<E> {
     /// Returns the public JSON document with its declared status and problem media type.
     fn into_response(self) -> warp::reply::Response {
-        warp_response(&self)
+        warp_response(self.problem().definition().status, self.into_details())
     }
 }
 
@@ -488,17 +518,14 @@ impl<E: Problem + Send> warp::Reply for Report<E> {
 impl<E: Problem + Sync> warp::Reply for &Report<E> {
     /// Renders an owned response without cloning or consuming the original error.
     fn into_response(self) -> warp::reply::Response {
-        warp_response(self)
+        warp_response(self.problem().definition().status, self.details())
     }
 }
 
 #[cfg(feature = "warp")]
-fn warp_response<E: Problem>(report: &Report<E>) -> warp::reply::Response {
+fn warp_response(status: StatusCode, details: ProblemDetails) -> warp::reply::Response {
     warp::Reply::into_response(warp::reply::with_header(
-        warp::reply::with_status(
-            warp::reply::json(&report.details()),
-            report.problem().definition().status,
-        ),
+        warp::reply::with_status(warp::reply::json(&details), status),
         "content-type",
         "application/problem+json",
     ))
