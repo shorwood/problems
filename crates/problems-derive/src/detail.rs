@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use syn::{Ident, LitStr};
+use syn::{Ident, LitStr, ext::IdentExt, parse::Parser};
 
 // Extract explicit named arguments and their formatting traits. Rust's format!
 // remains responsible for validating format specifiers; this scanner validates
@@ -33,7 +33,7 @@ pub(crate) fn detail_fields(
                     }
                 }
                 let (name, specifier) = placeholder.split_once(':').unwrap_or((&placeholder, ""));
-                syn::parse_str::<Ident>(name).map_err(|_| {
+                Ident::parse_any.parse_str(name).map_err(|_| {
                     syn::Error::new(
                         detail.span(),
                         "detail formatting requires named variant fields",

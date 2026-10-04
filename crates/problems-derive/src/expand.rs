@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream as Tokens;
 use quote::quote;
 use std::collections::BTreeSet;
-use syn::{Data, DeriveInput, Fields, Ident, spanned::Spanned};
+use syn::{Data, DeriveInput, Fields, Ident, ext::IdentExt, spanned::Spanned};
 
 use crate::{
     declaration::{Declaration, declaration, prefix},
@@ -96,7 +96,7 @@ pub(crate) fn expand_with_path(input: DeriveInput, runtime: Tokens) -> syn::Resu
                         field
                             .ident
                             .as_ref()
-                            .is_some_and(|ident| ident == &field_name)
+                            .is_some_and(|ident| ident.unraw() == &field_name)
                     })
                     .ok_or_else(|| {
                         syn::Error::new(

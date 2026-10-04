@@ -1,5 +1,6 @@
 use proc_macro2::{TokenStream as Tokens, TokenTree};
 use quote::ToTokens;
+use syn::ext::IdentExt;
 
 fn has_source_token(tokens: Tokens) -> bool {
     tokens.into_iter().any(|token| match token {
@@ -10,7 +11,10 @@ fn has_source_token(tokens: Tokens) -> bool {
 }
 
 pub(crate) fn is_source(field: &syn::Field) -> bool {
-    field.ident.as_ref().is_some_and(|name| name == "source")
+    field
+        .ident
+        .as_ref()
+        .is_some_and(|name| name.unraw() == "source")
         || field.attrs.iter().any(|attribute| {
             attribute.path().is_ident("source")
                 || attribute.path().is_ident("from")
