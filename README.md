@@ -140,8 +140,25 @@ and [framework examples](https://docs.rs/crate/problems/latest/source/examples/)
 
 ## Contributing
 
+The contribution environment uses Nix and direnv on x86_64 Linux. The
+committed flake and lockfile provide Rust 1.99.0, rustfmt, Clippy, and cargo-deny.
+Both crates use Rust edition 2024.
+
+Install Nix with flakes enabled, install direnv, and
+[enable its shell hook](https://direnv.net/docs/hook.html). Then clone the
+repository and allow its environment:
+
+```sh
+git clone https://github.com/shorwood/problems.git
+cd problems
+direnv allow
+```
+
+Direnv loads the development shell automatically when you enter the repository.
+You can also enter it explicitly with `nix develop`.
+
 Keep changes focused and cover changed behavior. Enable the relevant feature
-when changing an integration.
+when changing an integration. Run these checks in the development shell:
 
 ```sh
 cargo fmt --all --check
@@ -152,8 +169,8 @@ cargo deny --all-features check
 ```
 
 The GitHub Actions CI runs these checks on pushes and pull requests using stable
-Rust. Install the dependency checker with `cargo install cargo-deny --locked`.
-The committed lockfile records the tested dependency versions.
+Rust. The committed Cargo lockfile records the tested dependency versions;
+`flake.lock` pins the Nix development environment.
 
 ## License
 
