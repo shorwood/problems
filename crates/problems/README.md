@@ -212,9 +212,11 @@ async fn opaque_create_flow() -> impl IntoResponse {
 #     .route("/opaque", axum::routing::get(opaque_create_flow));
 
 fn response_example() {
-    let response = CreateFlowProblem::NameConflict.into_report().into_response();
+    let report = CreateFlowProblem::NameConflict.into_report();
+    let response = (&report).into_response();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(response.headers()["content-type"], "application/problem+json");
+    assert_eq!(report.problem().to_string(), "name conflict");
 }
 # response_example();
 # }
@@ -225,12 +227,26 @@ The response uses `application/problem+json` and mirrors the HTTP status in its
 numeric `status` member. Optional detail and instance are omitted when absent.
 The public body contains neither `Display` text nor the internal source chain.
 
+Axum, Rocket, Poem, Salvo, and Warp accept borrowed reports as well as owned
+reports. Borrowed rendering produces an owned public response and leaves the
+original report available for diagnostic inspection, without requiring `Clone`.
+Render the response before dropping a local report; returning a reference to a
+handler-local report is not possible. Actix's `error_response(&self)` already
+borrows its report.
+
+Poem and Warp require `E: Sync` for their borrowed response implementations,
+compared with `E: Send` for owned reports. Salvo's borrowed `Scribe` itself adds
+no bound, but its async `Writer` integration requires `E: Sync`.
+
 Poem handlers can return `Result<T, Report<E>>` when `T: poem::IntoResponse` and
 `E: Problem + Send + Sync + 'static`. Poem imposes these error-branch bounds;
 conversion to `poem::Error` itself needs only `E: Problem + Send`.
 A `poem::Result<T>` handler can use `?` on a report-returning operation.
 The conversion consumes the original error and retains its public response;
 inspect or report diagnostics before converting.
+Alternatively, `poem::Error::from(&report)` requires `E: Problem + Sync` and
+leaves the original report available. The resulting Poem error contains only
+the public response and can outlive the report; it does not retain its source chain.
 
 Declarations use numeric literals, including in Actix applications:
 `#[problem(status = 409, ...)]`. No framework status import is needed for a

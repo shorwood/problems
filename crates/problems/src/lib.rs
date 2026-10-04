@@ -301,14 +301,26 @@ impl<E: Problem> IntoReport for E {}
 
 #[cfg(feature = "axum")]
 impl<E: Problem> IntoResponse for Report<E> {
-    /// Serializes the public document as `application/problem+json` using its
-    /// declared HTTP status.
+    /// Consumes the report and renders its declared public response.
     fn into_response(self) -> axum::response::Response {
-        let details = self.details();
-        let status = self.problem().definition().status;
-        let headers = [(CONTENT_TYPE, "application/problem+json")];
-        (status, headers, Json(details)).into_response()
+        axum_response(&self)
     }
+}
+
+#[cfg(feature = "axum")]
+impl<E: Problem> IntoResponse for &Report<E> {
+    /// Renders an owned response while retaining the original error.
+    fn into_response(self) -> axum::response::Response {
+        axum_response(self)
+    }
+}
+
+#[cfg(feature = "axum")]
+fn axum_response<E: Problem>(report: &Report<E>) -> axum::response::Response {
+    let details = report.details();
+    let status = report.problem().definition().status;
+    let headers = [(CONTENT_TYPE, "application/problem+json")];
+    (status, headers, Json(details)).into_response()
 }
 
 /****************************************/
@@ -345,21 +357,39 @@ impl<E: Problem> actix_web::ResponseError for Report<E> {
 
 #[cfg(feature = "rocket")]
 impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for Report<E> {
-    /// Builds an owned JSON response with the declared status and problem media type.
+    /// Consumes the report and builds an owned public response.
     fn respond_to(self, request: &'r rocket::Request<'_>) -> rocket::response::Result<'static> {
-        // --- Let Rocket serialize the owned public document.
-        let details = self.details();
-        let status = rocket::http::Status::new(details.status());
-
-        // --- Preserve its body while setting the declared status and problem media type.
-        rocket::Response::build_from(rocket::serde::json::Json(details).respond_to(request)?)
-            .status(status)
-            .header(rocket::http::ContentType::new(
-                "application",
-                "problem+json",
-            ))
-            .ok()
+        rocket_response(&self, request)
     }
+}
+
+#[cfg(feature = "rocket")]
+impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for &Report<E> {
+    /// Builds a response whose body does not borrow the original report.
+    fn respond_to(self, request: &'r rocket::Request<'_>) -> rocket::response::Result<'static> {
+        rocket_response(self, request)
+    }
+}
+
+#[cfg(feature = "rocket")]
+fn rocket_response<E: Problem>(
+    report: &Report<E>,
+    request: &rocket::Request<'_>,
+) -> rocket::response::Result<'static> {
+    use rocket::response::Responder;
+
+    // --- Let Rocket serialize the owned public document.
+    let details = report.details();
+    let status = rocket::http::Status::new(details.status());
+
+    // --- Preserve its body while setting the declared status and problem media type.
+    rocket::Response::build_from(rocket::serde::json::Json(details).respond_to(request)?)
+        .status(status)
+        .header(rocket::http::ContentType::new(
+            "application",
+            "problem+json",
+        ))
+        .ok()
 }
 
 /****************************************/
@@ -368,15 +398,29 @@ impl<'r, E: Problem> rocket::response::Responder<'r, 'static> for Report<E> {
 
 #[cfg(feature = "poem")]
 impl<E: Problem + Send> poem::IntoResponse for Report<E> {
-    /// Returns the public JSON document with its declared status and problem media type.
+    /// Consumes the report and renders its declared public response.
     fn into_response(self) -> poem::Response {
-        let details = self.details();
-        poem::IntoResponse::into_response(
-            poem::web::Json(details)
-                .with_status(self.problem().definition().status)
-                .with_content_type("application/problem+json"),
-        )
+        poem_response(&self)
     }
+}
+
+#[cfg(feature = "poem")]
+impl<E: Problem + Sync> poem::IntoResponse for &Report<E> {
+    /// Renders an owned response without consuming the diagnostic error.
+    fn into_response(self) -> poem::Response {
+        poem_response(self)
+    }
+}
+
+#[cfg(feature = "poem")]
+fn poem_response<E: Problem>(report: &Report<E>) -> poem::Response {
+    use poem::IntoResponse;
+    let details = report.details();
+    poem::IntoResponse::into_response(
+        poem::web::Json(details)
+            .with_status(report.problem().definition().status)
+            .with_content_type("application/problem+json"),
+    )
 }
 
 #[cfg(feature = "poem")]
@@ -388,23 +432,44 @@ impl<E: Problem + Send> From<Report<E>> for poem::Error {
     }
 }
 
+#[cfg(feature = "poem")]
+impl<E: Problem + Sync> From<&Report<E>> for poem::Error {
+    /// Retains only the public response in the Poem error; leaves the report available.
+    fn from(report: &Report<E>) -> Self {
+        Self::from_response(poem_response(report))
+    }
+}
+
 /****************************************/
 /* Salvo Response                       */
 /****************************************/
 
 #[cfg(feature = "salvo")]
 impl<E: Problem> salvo::Scribe for Report<E> {
-    /// Renders the public JSON document and sets its declared status and media type.
+    /// Consumes the report and writes its declared public response.
     fn render(self, response: &mut salvo::Response) {
-        // --- Render the public document using Salvo's JSON writer.
-        response.status_code(self.problem().definition().status);
-        salvo::Scribe::render(salvo::writing::Json(self.details()), response);
-        // --- Replace the JSON writer's media type with the problem media type.
-        response.headers_mut().insert(
-            http::header::CONTENT_TYPE,
-            http::HeaderValue::from_static("application/problem+json"),
-        );
+        salvo_response(&self, response);
     }
+}
+
+#[cfg(feature = "salvo")]
+impl<E: Problem> salvo::Scribe for &Report<E> {
+    /// Writes public details while retaining the original report.
+    fn render(self, response: &mut salvo::Response) {
+        salvo_response(self, response);
+    }
+}
+
+#[cfg(feature = "salvo")]
+fn salvo_response<E: Problem>(report: &Report<E>, response: &mut salvo::Response) {
+    // --- Render the public document using Salvo's JSON writer.
+    response.status_code(report.problem().definition().status);
+    salvo::Scribe::render(salvo::writing::Json(report.details()), response);
+    // --- Replace the JSON writer's media type with the problem media type.
+    response.headers_mut().insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("application/problem+json"),
+    );
 }
 
 /****************************************/
