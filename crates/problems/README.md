@@ -120,6 +120,54 @@ The built-in HTTP integrations emit JSON. RFC XML mapping is outside this librar
 
 ## HTTP and documentation
 
+Keep application operations returning their typed error, then wrap it in a
+report at the handler boundary:
+
+```rust
+use problems::Report;
+use std::path::Path;
+
+#[derive(Debug, thiserror::Error, problems::Problem)]
+enum AppProblem {
+    #[error("failed to read file: {cause}")]
+    #[problem(type_uri = "urn:example:read-failed", title = "Internal server error")]
+    ReadFailed {
+        #[from]
+        cause: std::io::Error,
+    },
+}
+
+fn read_file(path: &Path) -> Result<Vec<u8>, AppProblem> {
+    Ok(std::fs::read(path)?)
+}
+
+fn handler(path: &Path) -> Result<Vec<u8>, Report<AppProblem>> {
+    Ok(read_file(path)?)
+}
+
+// When the handler calls the lower-level API directly, classify its error first.
+fn direct_handler(path: &Path) -> Result<Vec<u8>, Report<AppProblem>> {
+    Ok(std::fs::read(path).map_err(AppProblem::from)?)
+}
+
+# // Reading a directory exercises a real I/O failure without creating a file.
+# for report in [handler(Path::new(".")).unwrap_err(), direct_handler(Path::new(".")).unwrap_err()] {
+#     assert!(std::error::Error::source(report.problem()).is_some());
+#     let body = serde_json::to_value(report.details()).unwrap();
+#     assert_eq!(body, serde_json::json!({
+#         "type": "urn:example:read-failed",
+#         "title": "Internal server error",
+#         "status": 500
+#     }));
+# }
+```
+
+For `Result`, `?` uses one `From` conversion. It does not chain
+`io::Error -> AppProblem -> Report<AppProblem>`. The operation above uses
+thiserror's `From<io::Error>` implementation; the handler uses the existing
+`From<AppProblem> for Report<AppProblem>`. The direct handler makes the first
+conversion explicit with `map_err(AppProblem::from)`.
+
 Use a concrete error type in handlers:
 
 ```rust
