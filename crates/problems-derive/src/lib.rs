@@ -11,7 +11,9 @@ mod runtime_path;
 
 /// Declare public problems on enum variants.
 ///
-/// Every variant requires a static `title`. An enum's `#[problem(prefix = "...")]`
+/// Every variant requires a nonempty string-literal `title`. Braces in titles
+/// are literal text, including `{name}`; interpolation belongs in `detail`.
+/// An enum's `#[problem(prefix = "...")]`
 /// generates type URIs from kebab-case variant names; an explicit variant
 /// `type_uri` overrides it. Without a prefix, every variant requires `type_uri`.
 /// A colon separates prefix and name unless the prefix ends in `:` or `/`.

@@ -90,13 +90,6 @@ pub(crate) fn declaration(
             "problem identity and title must not be empty",
         ));
     }
-    // Titles are literal text; they are never passed to format!.
-    if title.value().contains(['{', '}']) {
-        return Err(syn::Error::new(
-            title.span(),
-            "title must be static; put formatting in detail",
-        ));
-    }
     Ok(Declaration {
         type_uri,
         status,
