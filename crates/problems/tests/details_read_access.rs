@@ -52,3 +52,52 @@ fn optional_getters_agree_with_serialization() {
         );
     }
 }
+
+#[test]
+fn typed_status_preserves_custom_numeric_projection() {
+    #[derive(Debug, thiserror::Error)]
+    #[error("private diagnostic")]
+    struct Custom;
+
+    static CUSTOM: ProblemDefinition = ProblemDefinition {
+        type_uri: "urn:test:custom",
+        title: "Custom",
+        status: match StatusCode::from_u16(499) {
+            Ok(status) => status,
+            Err(_) => panic!("invalid fixture status"),
+        },
+    };
+
+    impl Problem for Custom {
+        fn definition(&self) -> &'static ProblemDefinition {
+            &CUSTOM
+        }
+
+        fn definitions() -> impl Iterator<Item = &'static ProblemDefinition> {
+            std::iter::once(&CUSTOM)
+        }
+    }
+
+    let document = Report::new(Custom).into_details();
+    assert_eq!(document.status(), CUSTOM.status);
+    assert!(document.status().is_client_error());
+    assert_eq!(serde_json::to_value(&document).unwrap()["status"], 499);
+    assert_eq!(
+        problems::GenericProblem::from(document).status(),
+        Some(CUSTOM.status)
+    );
+}
+
+#[cfg(feature = "aide")]
+#[test]
+fn typed_status_keeps_numeric_required_schema() {
+    let schema = serde_json::to_value(schemars::schema_for!(problems::ProblemDetails)).unwrap();
+    assert_eq!(schema["properties"]["status"]["type"], "integer");
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "status")
+    );
+}

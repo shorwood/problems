@@ -109,6 +109,8 @@ into public detail. The derive supports unit and named-field enum variants.
 `ProblemDetails::from(&report)` and `Report::details` construct an owned
 public document without reporting the error. Definitions use `StatusCode`, so
 conversion is infallible. The derive accepts only integer status literals from 100 through 999, such as `status = 409`. Constant paths and other expressions are rejected.
+`ProblemDetails::status()` returns `StatusCode`, preserving status comparisons
+and predicates while serialization keeps the JSON member numeric.
 Omitting `status` defaults to `StatusCode::INTERNAL_SERVER_ERROR` (500). The document remains usable after dropping the report.
 
 Attach an occurrence URI at the HTTP boundary without adding request context
@@ -156,6 +158,50 @@ HTTP adapters use consuming projection; borrowed adapters and Actix's
 `error_response(&self)` use borrowing projection. Diagnostic formatting still
 comes from the original error. `into_problem()` recovers that error and discards
 the attached occurrence context.
+
+## Receiving problem documents
+
+Use `GenericProblem` to decode owned public data from an HTTP response:
+
+```rust
+use problems::{GenericProblem, StatusCode};
+
+let problem = {
+    let body = String::from(r#"{
+        "type": "urn:example:name-conflict",
+        "title": "Name conflict",
+        "status": 409,
+        "detail": "Choose another name.",
+        "instance": "/occurrences/123",
+        "extension": {"ignored": true}
+    }"#);
+    serde_json::from_str::<GenericProblem>(&body)?
+};
+
+assert_eq!(problem.type_uri(), "urn:example:name-conflict");
+assert_eq!(problem.title(), Some("Name conflict"));
+assert_eq!(problem.status(), Some(StatusCode::CONFLICT));
+assert_eq!(problem.detail(), Some("Choose another name."));
+assert_eq!(problem.instance(), Some("/occurrences/123"));
+# Ok::<(), serde_json::Error>(())
+```
+
+The document owns its strings and remains usable after dropping the response
+buffer. Missing `type` defaults to `about:blank`; other missing members return
+`None`. Unknown extensions are discarded. Decoding uses ordinary Serde type
+checks: wrongly typed members fail decoding. This intentionally does not implement
+[RFC 9457's tolerant member-processing rule](https://www.rfc-editor.org/rfc/rfc9457.html#section-3.1).
+Status is decoded as an optional `StatusCode`; invalid values fail decoding. Relative
+URI references remain unresolved; the application must use the response's base
+URI when interpreting them.
+
+`GenericProblem::from(report.into_details())` also converts a local public
+document: it owns the static type and title and moves detail and instance.
+This receiving type carries public data only. It has no `Problem`, `Error`,
+framework response, or Aide operation implementation, and cannot recover the
+original diagnostic error or its static definitions. Keep `Report<E>` in server
+handlers and use the actual HTTP response status when handling received errors;
+the body's status is advisory.
 
 ## Features
 
