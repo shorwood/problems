@@ -159,6 +159,19 @@ fn typed_handler_declares_all_error_statuses() {
     for status in [401, 404, 503] {
         assert!(responses.contains_key(&aide::openapi::StatusCode::Code(status)));
     }
+    let api = serde_json::to_value(&api).unwrap();
+    let schemas = api["components"]["schemas"].as_object().unwrap();
+    assert_eq!(schemas.len(), 1);
+    let schema = &schemas["ProblemDetails"];
+    assert_eq!(schema["properties"]["status"]["minimum"], 100);
+    assert_eq!(schema["properties"]["status"]["maximum"], 999);
+    for status in ["401", "404", "503"] {
+        assert_eq!(
+            api["paths"]["/typed/{case}"]["get"]["responses"][status]["content"]["application/problem+json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/ProblemDetails"
+        );
+    }
 }
 
 #[cfg(feature = "aide")]

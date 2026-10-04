@@ -92,7 +92,18 @@ fn typed_status_preserves_custom_numeric_projection() {
 #[test]
 fn typed_status_keeps_numeric_required_schema() {
     let schema = serde_json::to_value(schemars::schema_for!(problems::ProblemDetails)).unwrap();
-    assert_eq!(schema["properties"]["status"]["type"], "integer");
+    let status = &schema["properties"]["status"];
+    assert_eq!(status["type"], "integer");
+    assert_eq!(status["minimum"], 100);
+    assert_eq!(status["maximum"], 999);
+    assert!(status["description"].as_str().unwrap().contains("advisory"));
+    for code in [100, 400, 499, 500, 999] {
+        assert!(StatusCode::from_u16(code).is_ok());
+        assert!(
+            (status["minimum"].as_u64().unwrap()..=status["maximum"].as_u64().unwrap())
+                .contains(&u64::from(code))
+        );
+    }
     assert!(
         schema["required"]
             .as_array()

@@ -159,7 +159,10 @@ pub struct ProblemDetails {
     ///
     /// This value is advisory; intermediaries may change the HTTP response status.
     #[serde(serialize_with = "serialize_status")]
-    #[cfg_attr(feature = "schemars", schemars(with = "u16"))]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "u16", range(min = 100, max = 999))
+    )]
     status: StatusCode,
 
     /// Human-readable explanation specific to this occurrence.
