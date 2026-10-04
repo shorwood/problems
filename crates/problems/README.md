@@ -65,7 +65,7 @@ use problems::Problem;
 #[problem(prefix = "urn:example")]
 enum MyProblem {
     #[error("resource not found")]
-    #[problem(title = "Not Found", status = 404)]
+    #[problem(404)]
     NotFound,
 }
 
@@ -77,6 +77,15 @@ time. A colon is inserted unless the prefix already ends in `:` or `/`:
 `urn:example:` and `https://example.com/problems/` both work as written.
 An explicit variant `type_uri` overrides the prefix. Without a prefix, it remains
 required. Duplicate resulting URIs and empty prefixes are rejected.
+
+Titles default to the variant name converted to Title Case by `heck`:
+`NameConflict` becomes `Name Conflict`. An explicit nonempty `title` overrides
+the default. Renaming a variant also changes its default title.
+
+`#[problem(409)]` is shorthand for `#[problem(status = 409)]`. Both forms accept
+only numeric literals from 100 through 999 and share duplicate-status checks.
+Use a separate `#[problem(...)]` attribute for an explicit `type_uri`, `title`,
+or `detail` when using shorthand. An enum prefix can supply the type URI, as above.
 
 Renaming a variant changes its generated public problem identity. Set an explicit
 `type_uri` to preserve an established identity through a Rust rename. Titles do

@@ -11,7 +11,8 @@ mod runtime_path;
 
 /// Declare public problems on enum variants.
 ///
-/// Every variant requires a nonempty string-literal `title`. Braces in titles
+/// Titles default to the variant name converted to Title Case by `heck`.
+/// An explicit `title` must be a nonempty string literal. Braces in titles
 /// are literal text, including `{name}`; interpolation belongs in `detail`.
 /// An enum's `#[problem(prefix = "...")]`
 /// generates type URIs from kebab-case variant names; an explicit variant
@@ -19,8 +20,11 @@ mod runtime_path;
 /// A colon separates prefix and name unless the prefix ends in `:` or `/`.
 /// Renaming a variant changes its generated URI; use an explicit URI to preserve
 /// an existing public identity. Duplicate type URIs are rejected. Optional `status`
-/// accepts an integer literal from 100 through 999 and defaults to 500. Optional `detail` supports Rust
-/// named-field formatting with literal width and precision; dynamic formatting
+/// accepts an integer literal from 100 through 999 and defaults to 500.
+/// `#[problem(409)]` is shorthand for `#[problem(status = 409)]`; use a separate
+/// attribute for other declarations. Both forms share validation and duplicate checks.
+/// Optional `detail` supports Rust named-field formatting with literal width
+/// and precision; dynamic formatting
 /// parameters are unsupported. Other fields remain diagnostic.
 #[proc_macro_derive(Problem, attributes(problem))]
 pub fn derive_problem(input: TokenStream) -> TokenStream {

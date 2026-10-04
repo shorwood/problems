@@ -1,5 +1,5 @@
-use heck::ToKebabCase;
-use proc_macro2::Span;
+use heck::{ToKebabCase, ToTitleCase};
+use proc_macro2::{Span, TokenTree};
 use std::collections::BTreeSet;
 use syn::{Attribute, Expr, Ident, Lit, LitStr, ext::IdentExt};
 
@@ -8,6 +8,25 @@ pub(crate) struct Declaration {
     pub(crate) status: Option<u16>,
     pub(crate) title: LitStr,
     pub(crate) detail: Option<LitStr>,
+}
+
+const STATUS_MESSAGE: &str = "status requires an integer literal from 100 through 999, such as status = 409; omit status to use 500";
+
+fn status_number(expression: Expr) -> syn::Result<u16> {
+    let message = STATUS_MESSAGE;
+    let Expr::Lit(literal) = expression else {
+        return Err(syn::Error::new_spanned(expression, message));
+    };
+    let Lit::Int(integer) = literal.lit else {
+        return Err(syn::Error::new_spanned(literal, message));
+    };
+    let number = integer
+        .base10_parse::<u16>()
+        .map_err(|_| syn::Error::new(integer.span(), message))?;
+    if !(100..=999).contains(&number) {
+        return Err(syn::Error::new(integer.span(), message));
+    }
+    Ok(number)
 }
 
 pub(crate) fn prefix(attributes: &[Attribute]) -> syn::Result<Option<LitStr>> {
@@ -43,6 +62,28 @@ pub(crate) fn declaration(
     let (mut type_uri, mut status, mut title, mut detail) = (None, None, None, None);
     let mut seen = BTreeSet::new();
     for attribute in attributes.iter().filter(|a| a.path().is_ident("problem")) {
+        let first = attribute
+            .meta
+            .require_list()?
+            .tokens
+            .clone()
+            .into_iter()
+            .next();
+        if first.is_some_and(|token| match token {
+            TokenTree::Literal(_) => true,
+            TokenTree::Punct(punct) => punct.as_char() == '-',
+            _ => false,
+        }) {
+            if !seen.insert("status".into()) {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "duplicate problem attribute",
+                ));
+            }
+            let expression = attribute.parse_args::<Expr>()?;
+            status = Some(status_number(expression)?);
+            continue;
+        }
         attribute.parse_nested_meta(|meta| {
             let key = meta.path.get_ident().map(ToString::to_string);
             let Some(key) = key else {
@@ -54,26 +95,14 @@ pub(crate) fn declaration(
             match key.as_str() {
                 "type_uri" => type_uri = Some(meta.value()?.parse::<LitStr>()?),
                 "status" => {
-                    let message = "status requires an integer literal from 100 through 999, such as status = 409; omit status to use 500";
-                    let value = meta.value().map_err(|error| {
-                        syn::Error::new(error.span(), message)
-                    })?;
-                    let expression = value.parse::<Expr>().map_err(|error| {
-                        syn::Error::new(error.span(), message)
-                    })?;
-                    let Expr::Lit(literal) = expression else {
-                        return Err(syn::Error::new_spanned(expression, message));
-                    };
-                    let Lit::Int(integer) = literal.lit else {
-                        return Err(syn::Error::new_spanned(literal, message));
-                    };
-                    let number = integer.base10_parse::<u16>().map_err(|_| {
-                        syn::Error::new(integer.span(), message)
-                    })?;
-                    if !(100..=999).contains(&number) {
-                        return Err(syn::Error::new(integer.span(), message));
-                    }
-                    status = Some(number);
+                    let message = STATUS_MESSAGE;
+                    let value = meta
+                        .value()
+                        .map_err(|error| syn::Error::new(error.span(), message))?;
+                    let expression = value
+                        .parse::<Expr>()
+                        .map_err(|error| syn::Error::new(error.span(), message))?;
+                    status = Some(status_number(expression)?);
                 }
                 "title" => title = Some(meta.value()?.parse::<LitStr>()?),
                 "detail" => detail = Some(meta.value()?.parse::<LitStr>()?),
@@ -104,7 +133,9 @@ pub(crate) fn declaration(
         }
         (None, None) => return Err(required("type_uri")),
     };
-    let title = title.ok_or_else(|| required("title"))?;
+    let title = title.unwrap_or_else(|| {
+        LitStr::new(&variant.unraw().to_string().to_title_case(), variant.span())
+    });
     if type_uri.value().is_empty() || title.value().is_empty() {
         return Err(syn::Error::new(
             span,

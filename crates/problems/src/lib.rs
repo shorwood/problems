@@ -59,6 +59,8 @@ pub struct ProblemDefinition {
 /// implements `detail()` when a detail format is declared, using the variant's
 /// named fields. Status accepts an integer literal from 100 through 999 and defaults to
 /// `StatusCode::INTERNAL_SERVER_ERROR` when omitted. `instance()` defaults to `None`.
+/// `#[problem(409)]` abbreviates `#[problem(status = 409)]`. Titles default to
+/// the variant name in Title Case, such as `NameConflict` becoming `Name Conflict`.
 /// An enum prefix generates type URIs from kebab-case variant names. Explicit
 /// variant `type_uri` declarations override it; without a prefix they are required.
 /// Prefixes ending in `:` or `/` are used directly; otherwise a colon is appended.

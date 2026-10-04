@@ -1,0 +1,12 @@
+use issues::IntoReport;
+#[derive(Debug, thiserror::Error, problems_derive::Problem)]
+#[problem(prefix = "urn:test")]
+enum Failure {
+    #[error("failure")]
+    NameConflict,
+}
+fn main() {
+    let body = serde_json::to_value(Failure::NameConflict.into_report().details()).unwrap();
+    assert_eq!(body["title"], "Name Conflict");
+    assert_eq!(body["status"], 500);
+}

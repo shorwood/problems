@@ -1,0 +1,5 @@
+error: duplicate problem attribute
+ --> tests/ui/fail_shorthand_duplicate.rs:6:15
+  |
+6 |     #[problem(status = 409)]
+  |               ^^^^^^
