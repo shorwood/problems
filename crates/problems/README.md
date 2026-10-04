@@ -177,7 +177,12 @@ thiserror's `From<io::Error>` implementation; the handler uses the existing
 `From<AppProblem> for Report<AppProblem>`. The direct handler makes the first
 conversion explicit with `map_err(AppProblem::from)`.
 
-Use a concrete error type in handlers:
+`IntoReport` is an extension trait on the original error: it adds
+`.into_report()`, which returns `Report<E>`. Framework response traits are
+implemented on that report. A return type such as `Result<T, impl IntoReport>`
+only promises conversion and does not satisfy Axum's response contract.
+
+Use a concrete report error type in handlers:
 
 ```rust
 # fn main() {
@@ -196,6 +201,15 @@ enum CreateFlowProblem {
 async fn create_flow() -> Result<StatusCode, Report<CreateFlowProblem>> {
     Err(CreateFlowProblem::NameConflict.into_report())
 }
+
+// Opaque Axum responses work after explicit conversion.
+async fn opaque_create_flow() -> impl IntoResponse {
+    create_flow().await.into_response()
+}
+
+# let _router = axum::Router::<()>::new()
+#     .route("/concrete", axum::routing::get(create_flow))
+#     .route("/opaque", axum::routing::get(opaque_create_flow));
 
 fn response_example() {
     let response = CreateFlowProblem::NameConflict.into_report().into_response();
@@ -228,6 +242,10 @@ declarations. It groups variants by status and lists each title and identity in
 the response description. All entries reference one `ProblemDetails` schema;
 only the standard members are supported. No global registry or per-variant
 schemas are required.
+
+Keep `Result<T, Report<E>>` when Aide needs these declared statuses. Returning
+only `impl IntoResponse` hides the report's `OperationOutput` implementation;
+the Axum response bound alone does not expose OpenAPI metadata.
 
 ## Framework examples
 

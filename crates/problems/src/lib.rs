@@ -273,6 +273,9 @@ impl<E: Problem> From<E> for Report<E> {
 
 /// Converts a problem into a report while retaining its concrete error type.
 /// Every type implementing `Problem` receives this convenience method.
+/// This extension trait does not provide a framework response contract.
+/// Use `Report<E>` as the handler error type to expose response and, with
+/// `aide`, static output metadata implementations.
 pub trait IntoReport: Problem + Sized {
     /// Wraps the original error without serialization or diagnostic reporting.
     fn into_report(self) -> Report<Self> {
