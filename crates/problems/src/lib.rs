@@ -282,6 +282,7 @@ pub trait Problem: std::error::Error {
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schemars", schemars(rename = "ProblemDetails_for_{D}"))]
 pub struct ProblemDetails<D = ()> {
     /// URI reference identifying the problem type, serialized as `type`.
     #[serde(rename = "type")]

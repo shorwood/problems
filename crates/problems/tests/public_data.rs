@@ -309,3 +309,65 @@ fn openapi_shares_typed_payload_union_across_statuses() {
     assert!(schemas.contains("request"));
     assert!(schemas.contains("count"));
 }
+
+#[cfg(feature = "aide")]
+#[test]
+fn openapi_preserves_different_payloads_across_routes() {
+    async fn retry() -> Result<(), problems::Report<TypedRetry>> {
+        Err(TypedRetry {
+            seconds: 30,
+            request: "abc".into(),
+        }
+        .into_report())
+    }
+    async fn optional() -> Result<(), problems::Report<Optional>> {
+        Err(Optional { value: Some(7) }.into_report())
+    }
+
+    for reverse in [false, true] {
+        aide::generate::in_context(|context| {
+            context.schema = Default::default();
+        });
+        let mut api = aide::openapi::OpenApi::default();
+        let router = aide::axum::ApiRouter::<()>::new();
+        let router = if reverse {
+            router
+                .api_route("/optional", aide::axum::routing::get(optional))
+                .api_route("/retry", aide::axum::routing::get(retry))
+        } else {
+            router
+                .api_route("/retry", aide::axum::routing::get(retry))
+                .api_route("/optional", aide::axum::routing::get(optional))
+        };
+        let _router = router.finish_api(&mut api);
+        let document = serde_json::to_value(api).unwrap();
+        let mut references = Vec::new();
+        for (path, status, fields) in [
+            ("/retry", "429", &["seconds", "request"][..]),
+            ("/optional", "500", &["value"][..]),
+        ] {
+            let reference = document["paths"][path]["get"]["responses"][status]
+                ["content"]["application/problem+json"]["schema"]["$ref"]
+                .as_str().unwrap();
+            references.push(reference);
+            let details = document
+                .pointer(reference.strip_prefix('#').unwrap())
+                .unwrap();
+            let data_reference = details["properties"]["data"]["anyOf"][0]["$ref"]
+                .as_str()
+                .unwrap();
+            let data = document
+                .pointer(data_reference.strip_prefix('#').unwrap())
+                .unwrap();
+            let properties = data["properties"].as_object().unwrap();
+            assert_eq!(properties.len(), fields.len());
+            for field in fields {
+                assert!(
+                    properties.contains_key(*field),
+                    "Missing {field} for {path}"
+                );
+            }
+        }
+        assert_ne!(references[0], references[1]);
+    }
+}
