@@ -7,65 +7,83 @@ Keep its diagnostic message and source chain available for logging.
 The same declaration supplies Axum responses and Aide's OpenAPI metadata.
 
 ```rust
-use aide::axum::{ApiRouter, routing::post};
-use problems::{IntoReport, Report};
+use aide::{
+    axum::{ApiRouter, routing::post},
+    openapi::OpenApi,
+};
+use problems::{Problem, Report};
+use thiserror::Error;
 
-// --- Declare diagnostics and the public contract.
-#[derive(Debug, thiserror::Error, problems::Problem)]
-#[problem(prefix = "urn:example")]
-enum CreateProblem {
-    #[error("duplicate name: {name}")]
-    #[problem(status = 409, detail = "The name '{name}' is already in use.")]
-    NameConflict {
+#[derive(Debug, Error, Problem)]
+#[problem(prefix = "urn:tea")]
+enum BrewProblem {
+    #[error("teapot {serial} received an order for {drink}")]
+    #[problem(
+        status = 418,
+        title = "I'm a teapot",
+        detail = "You ordered '{drink}'. I boil leaves. Manage your expectations."
+    )]
+    CoffeeRequested {
         #[problem(data)]
-        name: String,
+        drink: String,        // Public.
+        serial: &'static str, // Internal diagnostic.
     },
 }
 
-// --- Return a report when the operation fails.
-async fn create_flow() -> Result<(), Report<CreateProblem>> {
-    Err(CreateProblem::NameConflict { name: "monthly".into() }.into_report())
+async fn brew(drink: &str) -> Result<(), BrewProblem> {
+    if drink == "tea" {
+        return Ok(());
+    }
+    Err(BrewProblem::CoffeeRequested {
+        drink: drink.into(),
+        serial: "PRIVATE-TEAPOT-007",
+    })
 }
 
-// --- Register the Axum handler and generate its OpenAPI responses.
-let mut api = aide::openapi::OpenApi::default();
+async fn order_coffee() -> Result<(), Report<BrewProblem>> {
+    brew("espresso").await?;
+    Ok(())
+}
+
+// The same declaration supplies the response and OpenAPI schema.
+let mut api = OpenApi::default();
 let app = ApiRouter::<()>::new()
-    .api_route("/flows", post(create_flow))
+    .api_route("/coffee", post(order_coffee))
     .finish_api(&mut api);
 ```
 
-With the router served on `localhost:3000`:
+The handler uses `?` to convert `BrewProblem` into `Report<BrewProblem>`.
+The serial stays available through `report.problem()` for diagnostics, while
+only the selected `drink` field appears in the public payload and its schema.
+
+With the router served on `localhost:3000` (variable headers omitted and JSON
+formatted for readability):
 
 ```sh
-curl -i -X POST http://localhost:3000/flows
-```
-
-Expected response:
-
-```http
-HTTP/1.1 409 Conflict
-Content-Type: application/problem+json
+$ curl -i -X POST http://localhost:3000/coffee
+HTTP/1.1 418 I'm a teapot
+content-type: application/problem+json
 
 {
-  "type": "urn:example:name-conflict",
-  "title": "Name Conflict",
-  "status": 409,
-  "detail": "The name 'monthly' is already in use.",
-  "data": { "name": "monthly" }
+  "type": "urn:tea:coffee-requested",
+  "title": "I'm a teapot",
+  "status": 418,
+  "detail": "You ordered 'espresso'. I boil leaves. Manage your expectations.",
+  "data": { "drink": "espresso" }
 }
 ```
 
-Aide generates these OpenAPI responses for `POST /flows`:
+Aide generates these OpenAPI responses for `POST /coffee`:
 
 ```json
 {
   "200": { "description": "no content" },
-  "409": {
-    "description": "Name Conflict\nProblem type: urn:example:name-conflict",
+  "418": {
+    "description": "I'm a teapot\nProblem type: urn:tea:coffee-requested",
     "content": {
       "application/problem+json": {
         "schema": {
-          "$ref": "#/components/schemas/ProblemDetails_for_CreateProblemData_for_string"
+          "$ref": "#/components/schemas/ProblemDetails_for_BrewProblemData"
         }
       }
     }
