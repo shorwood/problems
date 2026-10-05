@@ -7,13 +7,12 @@ Keep its diagnostic message and source chain available for logging.
 The same declaration supplies Axum responses and Aide's OpenAPI metadata.
 
 ```rust
-use aide::{
-    axum::{ApiRouter, routing::post},
-    openapi::OpenApi,
-};
+use aide::axum::{ApiRouter, routing::post};
+use aide::openapi::OpenApi;
 use problems::{Problem, Report};
 use thiserror::Error;
 
+// --- Declare
 #[derive(Debug, Error, Problem)]
 #[problem(prefix = "urn:tea")]
 enum BrewProblem {
@@ -30,6 +29,7 @@ enum BrewProblem {
     },
 }
 
+// --- A simple operation that fails when coffee is requested.
 async fn brew(drink: &str) -> Result<(), BrewProblem> {
     if drink == "tea" {
         return Ok(());
@@ -40,12 +40,13 @@ async fn brew(drink: &str) -> Result<(), BrewProblem> {
     })
 }
 
+// --- Define a helper that returns a report for the Axum handler.
 async fn order_coffee() -> Result<(), Report<BrewProblem>> {
     brew("espresso").await?;
     Ok(())
 }
 
-// The same declaration supplies the response and OpenAPI schema.
+// --- The same declaration supplies the response and OpenAPI schema.
 let mut api = OpenApi::default();
 let app = ApiRouter::<()>::new()
     .api_route("/coffee", post(order_coffee))
