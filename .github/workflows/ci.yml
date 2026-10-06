@@ -9,28 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  rust:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Formatting
-        run: cargo fmt --all --check
-      - name: Lints
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: Tests and examples
-        run: cargo test --workspace --all-features --locked
-      - name: Runtime without derive
-        run: cargo test -p problems --no-default-features --locked
-
-  dependencies:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: OSPUZE'ing the dependencies
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          rust-version: stable
-          arguments: --all-features --locked
+      - uses: cachix/install-nix-action@v31
+      - name: Checks
+        run: nix develop --no-update-lock-file --command just check
