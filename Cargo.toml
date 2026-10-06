@@ -14,7 +14,7 @@ axum = "0.8.9"
 heck = "0.5.0"
 http = "1.5.0"
 poem = { version = "3.1.12", default-features = false }
-problems-derive = { version = "0.1.0", path = "crates/problems-derive" }
+problems-derive = { version = "0.1.1", path = "crates/problems-derive" }
 proc-macro-crate = "3.5.0"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
