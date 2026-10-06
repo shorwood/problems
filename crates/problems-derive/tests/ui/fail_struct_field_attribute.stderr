@@ -1,6 +1,6 @@
-error: unsupported problem attribute on the field
+error: a field status marker does not take a value
 
-         = help: use `#[problem(data)]` or `#[problem(data = "public_name")]` to select a field
+         = help: use `#[problem(status)]` to read the status from this field
 
  --> tests/ui/fail_struct_field_attribute.rs:5:15
   |

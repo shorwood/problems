@@ -1,0 +1,145 @@
+error: duplicate problem attribute `detail`
+
+         = help: keep exactly one declaration of this attribute
+
+  --> tests/ui/fail_status_field.rs:18:15
+   |
+18 |     #[problem(detail = "second")]
+   |               ^^^^^^
+
+error: duplicate problem attribute `detail`
+
+         = help: keep exactly one declaration of this attribute
+
+  --> tests/ui/fail_status_field.rs:22:5
+   |
+22 |     #[problem("second")]
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+error: duplicate problem attribute `detail`
+
+         = help: keep exactly one declaration of this attribute
+
+  --> tests/ui/fail_status_field.rs:26:5
+   |
+26 |     #[problem("second")]
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+error: unknown detail field `missing`
+
+         = help: use a field that can appear in public detail, or escape literal braces as `{{` and `}}`
+         = note: available detail fields: value
+
+  --> tests/ui/fail_status_field.rs:29:15
+   |
+29 |     #[problem("{missing}")]
+   |               ^^^^^^^^^^^
+
+error: diagnostic sources cannot be formatted into public detail
+
+         = help: remove the source field's placeholder from `detail`; format a separate public field instead
+         = note: diagnostic sources are kept out of public problem details
+
+  --> tests/ui/fail_status_field.rs:32:15
+   |
+32 |     #[problem("{source}")]
+   |               ^^^^^^^^^^
+
+error: a status field cannot be combined with a declared status
+
+         = help: keep either the status field or the declaration status
+
+ --> tests/ui/fail_status_field.rs:6:14
+  |
+6 |     Conflict { #[problem(status)] code: u32 },
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: duplicate problem attribute `status`
+
+         = help: keep exactly one declaration of this attribute
+
+ --> tests/ui/fail_status_field.rs:8:54
+  |
+8 |     Duplicate { #[problem(status)] a: u32, #[problem(status)] b: u32 },
+  |                                                      ^^^^^^
+
+error: first declared here
+ --> tests/ui/fail_status_field.rs:8:27
+  |
+8 |     Duplicate { #[problem(status)] a: u32, #[problem(status)] b: u32 },
+  |                           ^^^^^^
+
+error: duplicate problem attribute `status`
+
+         = help: keep exactly one declaration of this attribute
+
+  --> tests/ui/fail_status_field.rs:10:45
+   |
+10 |     Repeated { #[problem(status)] #[problem(status)] code: u32 },
+   |                                             ^^^^^^
+
+error: first declared here
+  --> tests/ui/fail_status_field.rs:10:26
+   |
+10 |     Repeated { #[problem(status)] #[problem(status)] code: u32 },
+   |                          ^^^^^^
+
+error: diagnostic sources cannot supply public status
+
+         = help: select a separate public status field
+
+  --> tests/ui/fail_status_field.rs:12:24
+   |
+12 |     Source { #[problem(status)] source: std::io::Error },
+   |                        ^^^^^^
+
+error: transparent variants delegate status
+
+         = help: remove the status marker; the inner problem supplies status
+
+  --> tests/ui/fail_status_field.rs:15:16
+   |
+15 |     Transparent(#[problem(status)] std::io::Error),
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0277]: the trait bound `u16: From<Duration>` is not satisfied
+  --> tests/ui/fail_status_field.rs:36:35
+   |
+36 | #[derive(Debug, thiserror::Error, problems_derive::Problem)]
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<Duration>` is not implemented for `u16`
+   |
+   = help: `u16` implements trait `From<T>`:
+             From<StatusCode>
+             From<bool>
+             From<http::uri::port::Port<T>>
+             From<std::ascii::Char>
+             From<u8>
+   = note: required for `Duration` to implement `Into<u16>`
+   = note: required for `u16` to implement `TryFrom<Duration>`
+   = note: required for `Duration` to implement `TryInto<u16>`
+   = note: this error originates in the derive macro `problems_derive::Problem` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `String: Copy` is not satisfied
+  --> tests/ui/fail_status_field.rs:41:35
+   |
+41 | #[derive(Debug, thiserror::Error, problems_derive::Problem)]
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Copy` is not implemented for `String`
+   |
+   = note: this error originates in the derive macro `problems_derive::Problem` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `u16: From<String>` is not satisfied
+  --> tests/ui/fail_status_field.rs:41:35
+   |
+41 | #[derive(Debug, thiserror::Error, problems_derive::Problem)]
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<String>` is not implemented for `u16`
+   |
+   = help: `u16` implements trait `From<T>`:
+             From<StatusCode>
+             From<bool>
+             From<http::uri::port::Port<T>>
+             From<std::ascii::Char>
+             From<u8>
+   = note: required for `String` to implement `Into<u16>`
+   = note: required for `u16` to implement `TryFrom<String>`
+   = note: required for `String` to implement `TryInto<u16>`
+   = note: this error originates in the derive macro `problems_derive::Problem` (in Nightly builds, run with -Z macro-backtrace for more info)

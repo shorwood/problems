@@ -10,7 +10,7 @@
 //!
 //! 1. Read the struct or enum variants, validate their metadata, and resolve
 //!    detail placeholders against their fields.
-//! 2. Select and validate the structured public data fields.
+//! 2. Select and validate the runtime status and structured public data fields.
 //! 3. Generate definition constants, a data container when needed, and the
 //!    runtime `Problem` implementation. Invalid input produces compiler errors
 //!    instead of a partial implementation.
@@ -98,7 +98,8 @@ use syn::{
 /// # Public detail and data
 ///
 /// `detail = "..."` formats named fields, such as `{name}`, or explicit tuple
-/// indexes, such as `{0}`. Without this attribute, the local detail is absent.
+/// indexes, such as `{0}`. `#[problem("...")]` is equivalent shorthand and must
+/// stand alone within its attribute. Without a format, the local detail is absent.
 /// Literal braces use `{{` and `}}`. Formatting traits follow the specifier,
 /// such as `Debug` for `{name:?}`. Literal width and precision are supported;
 /// dynamic width and precision are rejected. Rust checks the remaining format
@@ -108,6 +109,14 @@ use syn::{
 /// `#[problem(data)]` selects a named field for the structured payload.
 /// `#[problem(data = "public_name")]` sets its serialized name and is required
 /// for tuple fields. Selected names must be nonempty and unique per declaration.
+///
+/// A field marked `#[problem(status)]` supplies the occurrence status using
+/// `Copy + TryInto<u16>`. Conversion failures and values outside 100–999 use 500.
+/// Only one field may supply status; it cannot be a diagnostic source or coexist
+/// with a declaration status or transparent forwarding. Static definitions and
+/// OpenAPI documentation retain 500 for field-derived statuses. The marker does
+/// not select the field as public data.
+///
 /// Selecting data and interpolating detail are independent choices.
 ///
 /// Fields named `source`, marked `#[source]` or `#[from]`, or containing a
@@ -229,6 +238,14 @@ enum ProblemDiagnostic {
     DuplicateDataName { name: String },
     #[error("problem status must be an integer literal from 100 through 999")]
     InvalidStatus,
+    #[error("a field status marker does not take a value")]
+    InvalidStatusField,
+    #[error("a status field cannot be combined with a declared status")]
+    ConflictingStatus,
+    #[error("transparent variants delegate status")]
+    TransparentStatus,
+    #[error("diagnostic sources cannot supply public status")]
+    DiagnosticSourceStatus,
     #[error("tuple data fields require an explicit public name")]
     TupleDataNameRequired,
     #[error("diagnostic sources cannot be exposed as public data")]
@@ -328,7 +345,7 @@ impl ProblemDiagnostic {
                 "use `#[problem(prefix = \"urn:example\")]` on the enum; put `type_uri`, `status`, `title`, and `detail` on its variants"
             }
             Self::UnknownFieldAttribute => {
-                "use `#[problem(data)]` or `#[problem(data = \"public_name\")]` to select a field"
+                "use `#[problem(status)]`, `#[problem(data)]`, or `#[problem(data = \"public_name\")]` to select a field"
             }
             Self::DuplicateAttribute { .. } => "keep exactly one declaration of this attribute",
             Self::DuplicateTypeUri { .. } => {
@@ -343,6 +360,14 @@ impl ProblemDiagnostic {
             Self::InvalidStatus => {
                 "use `#[problem(status = 409)]` or `#[problem(409)]` with an integer literal"
             }
+            Self::InvalidStatusField => {
+                "use `#[problem(status)]` to read the status from this field"
+            }
+            Self::ConflictingStatus => "keep either the status field or the declaration status",
+            Self::TransparentStatus => {
+                "remove the status marker; the inner problem supplies status"
+            }
+            Self::DiagnosticSourceStatus => "select a separate public status field",
             Self::TupleDataNameRequired => {
                 "select this tuple field with `#[problem(data = \"public_name\")]`"
             }
@@ -466,6 +491,7 @@ struct Declaration<'a> {
     syntax: DeclarationSyntax<'a>,
     kind: DeclarationKind<'a>,
     public_data: PublicData<'a>,
+    status_field: Option<SelectedField<'a>>,
 }
 
 /// A local definition or forwarding to an existing inner problem.
@@ -479,7 +505,7 @@ struct ProblemMetadata<'a> {
     constant_name: Ident,
     type_uri: LitStr,
     title: LitStr,
-    status: u16,
+    status: Option<u16>,
     detail: Option<DetailFormat<'a>>,
 }
 
@@ -583,7 +609,7 @@ impl<'a> ProblemDerive<'a> {
                         constant_name,
                         type_uri,
                         title,
-                        status: attributes.status.unwrap_or(500),
+                        status: attributes.status,
                         detail,
                     })
                 };
@@ -591,6 +617,7 @@ impl<'a> ProblemDerive<'a> {
                     syntax,
                     kind,
                     public_data: PublicData::None,
+                    status_field: None,
                 })
             })();
             if let Some(declaration) = diagnostics.handle(parsed) {
@@ -598,12 +625,13 @@ impl<'a> ProblemDerive<'a> {
             }
         }
 
-        // --- Select data only for declarations whose metadata was valid.
+        // --- Select status and data only for declarations whose metadata was valid.
         let mut next_parameter = 0;
         for declaration in &mut declarations {
-            if let Some(public_data) =
-                diagnostics.handle(declaration.parse_public_data(&mut next_parameter))
-            {
+            let parsed = declaration
+                .parse_status_field()
+                .and_then(|()| declaration.parse_public_data(&mut next_parameter));
+            if let Some(public_data) = diagnostics.handle(parsed) {
                 declaration.public_data = public_data;
             }
         }
@@ -770,7 +798,14 @@ impl ProblemAttributes {
     fn read(attributes: &[Attribute]) -> MacroResult<Self> {
         let mut parsed = Self::default();
         for attribute in attributes.problem_attributes() {
-            if Self::is_status_shorthand(attribute)? {
+            if attribute.parse_args::<LitStr>().is_ok() {
+                if parsed.detail.is_some() {
+                    return Err(
+                        ProblemDiagnostic::DuplicateAttribute { name: "detail" }.at(attribute)
+                    );
+                }
+                parsed.detail = Some(attribute.parse_args()?);
+            } else if Self::is_status_shorthand(attribute)? {
                 if parsed.status.is_some() {
                     return Err(
                         ProblemDiagnostic::DuplicateAttribute { name: "status" }.at(attribute)
@@ -876,11 +911,27 @@ impl ProblemAttributes {
 
 /// Select and validate local data fields, or reserve a parameter for forwarded data.
 impl<'a> Declaration<'a> {
+    fn parse_status_field(&mut self) -> MacroResult<()> {
+        self.status_field = self.syntax.status_field()?;
+        if self.status_field.is_some() {
+            match &self.kind {
+                DeclarationKind::Transparent(_) => {
+                    return Err(ProblemDiagnostic::TransparentStatus.at(self.syntax.fields));
+                }
+                DeclarationKind::Defined(metadata) if metadata.status.is_some() => {
+                    return Err(ProblemDiagnostic::ConflictingStatus.at(self.syntax.fields));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn parse_public_data(&self, next_parameter: &mut usize) -> MacroResult<PublicData<'a>> {
         let mut selected = Vec::new();
         let mut names = BTreeMap::new();
         for (index, field) in self.syntax.fields.iter().enumerate() {
-            let Some(serialized_name) = field.public_data_name()? else {
+            let Some(serialized_name) = field.problem_field_attributes()?.data else {
                 continue;
             };
             if field.is_diagnostic_source() {
@@ -1196,6 +1247,10 @@ impl ProblemDerive<'_> {
             .declarations
             .iter()
             .map(|declaration| declaration.definition_arm(runtime));
+        let status = self
+            .declarations
+            .iter()
+            .map(|declaration| declaration.status_arm(runtime));
         let detail = self
             .declarations
             .iter()
@@ -1226,6 +1281,9 @@ impl ProblemDerive<'_> {
                 }
                 fn definitions() -> impl ::std::iter::Iterator<Item = &'static #runtime::ProblemDefinition> {
                     #definitions
+                }
+                fn status(&self) -> #runtime::StatusCode {
+                    match #scrutinee { #(#status),* }
                 }
                 fn detail(&self) -> ::std::option::Option<::std::string::String> {
                     match #scrutinee { #(#detail),* }
@@ -1261,7 +1319,7 @@ impl ProblemMetadata<'_> {
     fn generate(&self, runtime: &Tokens) -> Tokens {
         let type_uri = &self.type_uri;
         let title = &self.title;
-        let number = self.status;
+        let number = self.status.unwrap_or(500);
         quote!(#runtime::ProblemDefinition {
             type_uri: #type_uri,
             title: #title,
@@ -1296,6 +1354,10 @@ impl Declaration<'_> {
                 .flat_map(DetailFormat::formatting_bounds)
                 .collect(),
         };
+        if let Some(field) = &self.status_field {
+            let ty = field.ty;
+            bounds.push(syn::parse_quote!(#ty: ::std::marker::Copy + ::std::convert::TryInto<u16>));
+        }
         if let PublicData::Fields(fields) = &self.public_data {
             for field in fields {
                 let ty = field.selection.ty;
@@ -1315,6 +1377,28 @@ impl Declaration<'_> {
             DeclarationKind::Transparent(_) => {
                 let constructor = self.syntax.constructor();
                 quote!(#constructor(problem) => #runtime::Problem::definition(problem))
+            }
+        }
+    }
+
+    fn status_arm(&self, runtime: &Tokens) -> Tokens {
+        if let Some(field) = &self.status_field {
+            let pattern = self.syntax.pattern([field.pattern_binding()]);
+            let binding = &field.binding;
+            return quote!(#pattern => ::std::convert::TryInto::<u16>::try_into(*#binding)
+                .ok()
+                .and_then(|number| #runtime::StatusCode::from_u16(number).ok())
+                .unwrap_or(#runtime::StatusCode::INTERNAL_SERVER_ERROR));
+        }
+        match &self.kind {
+            DeclarationKind::Transparent(_) => {
+                let constructor = self.syntax.constructor();
+                quote!(#constructor(problem) => #runtime::Problem::status(problem))
+            }
+            DeclarationKind::Defined(metadata) => {
+                let pattern = self.syntax.pattern([]);
+                let constant_name = &metadata.constant_name;
+                quote!(#pattern => Self::#constant_name.status)
             }
         }
     }
@@ -1349,7 +1433,26 @@ impl Declaration<'_> {
     }
 }
 
-impl DeclarationSyntax<'_> {
+impl<'a> DeclarationSyntax<'a> {
+    fn status_field(&self) -> MacroResult<Option<SelectedField<'a>>> {
+        let mut selected = None;
+        let mut first = None;
+        for (index, field) in self.fields.iter().enumerate() {
+            if let Some(span) = field.problem_field_attributes()?.status {
+                if let Some(first) = first {
+                    return Err(ProblemDiagnostic::DuplicateAttribute { name: "status" }
+                        .conflict(span, first));
+                }
+                if field.is_diagnostic_source() {
+                    return Err(ProblemDiagnostic::DiagnosticSourceStatus.at_span(span));
+                }
+                first = Some(span);
+                selected = Some(SelectedField::new(index, field));
+            }
+        }
+        Ok(selected)
+    }
+
     fn constructor(&self) -> Tokens {
         let name = self.name;
         if self.is_struct {
@@ -1657,25 +1760,46 @@ impl ProblemAttributesExt for [Attribute] {
 
 /// Select public fields and recognize diagnostic sources from names and attributes.
 trait ProblemFieldExt {
-    fn public_data_name(&self) -> MacroResult<Option<LitStr>>;
+    fn problem_field_attributes(&self) -> MacroResult<ProblemFieldAttributes>;
     fn is_diagnostic_source(&self) -> bool;
 }
 
+#[derive(Default)]
+struct ProblemFieldAttributes {
+    data: Option<LitStr>,
+    status: Option<Span>,
+}
+
 impl ProblemFieldExt for Field {
-    fn public_data_name(&self) -> MacroResult<Option<LitStr>> {
-        let mut name = None;
+    fn problem_field_attributes(&self) -> MacroResult<ProblemFieldAttributes> {
+        let mut parsed = ProblemFieldAttributes::default();
         for attribute in self.attrs.problem_attributes() {
             attribute.parse_problem_args(|input: ParseStream| {
                 if input.is_empty() {
                     return Err(ProblemDiagnostic::EmptyAttribute.at_span(input.span()));
                 }
                 while !input.is_empty() {
+                    if input.peek(kw::status) {
+                        let keyword: kw::status = input.parse()?;
+                        if input.peek(syn::Token![=]) {
+                            return Err(ProblemDiagnostic::InvalidStatusField.at(keyword));
+                        }
+                        if let Some(first) = parsed.status {
+                            return Err(ProblemDiagnostic::DuplicateAttribute { name: "status" }
+                                .conflict(keyword.span, first));
+                        }
+                        parsed.status = Some(keyword.span);
+                        if !input.is_empty() {
+                            input.parse::<syn::Token![,]>()?;
+                        }
+                        continue;
+                    }
                     if !input.peek(kw::data) {
                         let path: syn::Path = input.parse()?;
                         return Err(ProblemDiagnostic::UnknownFieldAttribute.at(path));
                     }
                     let keyword: kw::data = input.parse()?;
-                    if name.is_some() {
+                    if parsed.data.is_some() {
                         return Err(
                             ProblemDiagnostic::DuplicateAttribute { name: "data" }.at(keyword)
                         );
@@ -1692,7 +1816,7 @@ impl ProblemFieldExt for Field {
                     if value.value().is_empty() {
                         return Err(ProblemDiagnostic::EmptyDataName.at(&value));
                     }
-                    name = Some(value);
+                    parsed.data = Some(value);
                     if !input.is_empty() {
                         input.parse::<syn::Token![,]>()?;
                     }
@@ -1700,7 +1824,7 @@ impl ProblemFieldExt for Field {
                 Ok(())
             })?;
         }
-        Ok(name)
+        Ok(parsed)
     }
 
     fn is_diagnostic_source(&self) -> bool {

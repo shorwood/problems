@@ -69,8 +69,9 @@ pub mod __private {
 /// The public identity, summary, and HTTP status of a problem type.
 ///
 /// A definition is shared by all occurrences of that problem. For example,
-/// every name conflict has the same type URI and status, while its [`Problem::detail`]
-/// can explain which name was taken. Reports and OpenAPI use the same definition.
+/// every name conflict has the same type URI and declared status, while its
+/// [`Problem::detail`] can explain which name was taken. [`Problem::status`] can
+/// override the declared status for an occurrence. OpenAPI uses static definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProblemDefinition {
     /// Stable URI reference identifying the problem type (serialized as `type`).
@@ -78,7 +79,7 @@ pub struct ProblemDefinition {
     pub type_uri: &'static str,
     /// Short, human-readable summary shared by occurrences of this problem.
     pub title: &'static str,
-    /// HTTP response status, also included in the public document.
+    /// Declared HTTP status. [`Problem::status`] can override it per occurrence.
     pub status: StatusCode,
 }
 
@@ -144,7 +145,12 @@ pub struct ProblemDefinition {
 ///   converted to Title Case: `NameConflict` becomes `Name Conflict`.
 /// - `detail = "..."` formats an explanation using named fields or explicit
 ///   tuple indexes such as `{0}`. Diagnostic sources cannot be interpolated.
-///   Without a format, there is no detail.
+///   `#[problem("...")]` is equivalent standalone shorthand. Without a format,
+///   there is no detail.
+/// - A field marked `#[problem(status)]` supplies runtime status through
+///   `Copy + TryInto<u16>`; conversion failures or values outside 100–999 use 500.
+///   It cannot coexist with an explicit declaration status. Static definitions
+///   and OpenAPI documentation retain 500. Public data selection is independent.
 ///
 /// An enum's `#[problem(prefix = "urn:example")]` generates a type URI for each
 /// local variant, such as `urn:example:name-conflict`. Prefixes ending in `:` or
@@ -254,6 +260,14 @@ pub trait Problem: std::error::Error {
     fn definitions() -> impl Iterator<Item = &'static ProblemDefinition>
     where
         Self: Sized;
+
+    /// HTTP status of this occurrence. Defaults to the static definition's status.
+    ///
+    /// A derived `#[problem(status)]` field overrides this at runtime. Static
+    /// definitions and OpenAPI documentation retain 500 for such declarations.
+    fn status(&self) -> StatusCode {
+        self.definition().status
+    }
 
     /// Client-facing explanation of this occurrence. The default is no detail.
     fn detail(&self) -> Option<String> {
@@ -657,7 +671,7 @@ impl<E: Problem> Report<E> {
         ProblemDetails {
             type_uri: definition.type_uri,
             title: definition.title,
-            status: definition.status,
+            status: self.problem.status(),
             detail: self.problem.detail(),
             instance: self.instance.or_else(|| self.problem.instance()),
             data: self.problem.into_data(),
@@ -715,7 +729,7 @@ impl<E: Problem> Report<E> {
         ProblemDetails {
             type_uri: definition.type_uri,
             title: definition.title,
-            status: definition.status,
+            status: self.problem.status(),
             detail: self.problem.detail(),
             instance: self.instance.clone().or_else(|| self.problem.instance()),
             data: self.problem.data(),
@@ -779,7 +793,7 @@ impl<E: Problem> IntoReport for E {}
 impl<E: Problem> axum::response::IntoResponse for Report<E> {
     /// Consumes the report and renders its declared public response.
     fn into_response(self) -> axum::response::Response {
-        axum_response(self.problem().definition().status, self.into_details())
+        axum_response(self.into_details())
     }
 }
 
@@ -787,16 +801,14 @@ impl<E: Problem> axum::response::IntoResponse for Report<E> {
 impl<E: Problem> axum::response::IntoResponse for &Report<E> {
     /// Renders an owned response while retaining the original error.
     fn into_response(self) -> axum::response::Response {
-        axum_response(self.problem().definition().status, self.as_details())
+        axum_response(self.as_details())
     }
 }
 
 #[cfg(feature = "axum")]
-fn axum_response<D: serde::Serialize>(
-    status: StatusCode,
-    details: ProblemDetails<D>,
-) -> axum::response::Response {
+fn axum_response<D: serde::Serialize>(details: ProblemDetails<D>) -> axum::response::Response {
     let headers = [(axum::http::header::CONTENT_TYPE, "application/problem+json")];
+    let status = details.status();
     axum::response::IntoResponse::into_response((status, headers, axum::Json(details)))
 }
 
@@ -816,15 +828,18 @@ impl<E: Problem> std::fmt::Display for Report<E> {
 impl<E: Problem> actix_web::ResponseError for Report<E> {
     /// Converts the declared status to Actix Web's HTTP status type.
     fn status_code(&self) -> actix_web::http::StatusCode {
-        actix_web::http::StatusCode::from_u16(self.problem().definition().status.as_u16())
+        actix_web::http::StatusCode::from_u16(self.problem().status().as_u16())
             .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR)
     }
 
     /// Returns the public JSON document without exposing diagnostic formatting.
     fn error_response(&self) -> actix_web::HttpResponse {
-        actix_web::HttpResponse::build(self.status_code())
+        let details = self.as_details();
+        let status = actix_web::http::StatusCode::from_u16(details.status().as_u16())
+            .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+        actix_web::HttpResponse::build(status)
             .content_type("application/problem+json")
-            .json(self.as_details())
+            .json(details)
     }
 }
 
@@ -879,7 +894,7 @@ where
 {
     /// Consumes the report and renders its declared public response.
     fn into_response(self) -> poem::Response {
-        poem_response(self.problem().definition().status, self.into_details())
+        poem_response(self.into_details())
     }
 }
 
@@ -890,16 +905,14 @@ where
 {
     /// Renders an owned response without consuming the diagnostic error.
     fn into_response(self) -> poem::Response {
-        poem_response(self.problem().definition().status, self.as_details())
+        poem_response(self.as_details())
     }
 }
 
 #[cfg(feature = "poem")]
-fn poem_response<D: serde::Serialize + Send>(
-    status: StatusCode,
-    details: ProblemDetails<D>,
-) -> poem::Response {
+fn poem_response<D: serde::Serialize + Send>(details: ProblemDetails<D>) -> poem::Response {
     use poem::IntoResponse;
+    let status = details.status();
     poem::IntoResponse::into_response(
         poem::web::Json(details)
             .with_status(status)
@@ -926,10 +939,7 @@ where
 {
     /// Retains only the public response in the Poem error; leaves the report available.
     fn from(report: &'a Report<E>) -> Self {
-        Self::from_response(poem_response(
-            report.problem().definition().status,
-            report.as_details(),
-        ))
+        Self::from_response(poem_response(report.as_details()))
     }
 }
 
@@ -944,11 +954,7 @@ where
 {
     /// Consumes the report and writes its declared public response.
     fn render(self, response: &mut salvo::Response) {
-        salvo_response(
-            self.problem().definition().status,
-            self.into_details(),
-            response,
-        );
+        salvo_response(self.into_details(), response);
     }
 }
 
@@ -959,21 +965,17 @@ where
 {
     /// Writes public details while retaining the original report.
     fn render(self, response: &mut salvo::Response) {
-        salvo_response(
-            self.problem().definition().status,
-            self.as_details(),
-            response,
-        );
+        salvo_response(self.as_details(), response);
     }
 }
 
 #[cfg(feature = "salvo")]
 fn salvo_response<D: serde::Serialize + Send>(
-    status: StatusCode,
     details: ProblemDetails<D>,
     response: &mut salvo::Response,
 ) {
     // --- Render the public document using Salvo's JSON writer.
+    let status = details.status();
     response.status_code(status);
     salvo::Scribe::render(salvo::writing::Json(details), response);
     // --- Replace the JSON writer's media type with the problem media type.
@@ -991,7 +993,7 @@ fn salvo_response<D: serde::Serialize + Send>(
 impl<E: Problem + Send> warp::Reply for Report<E> {
     /// Returns the public JSON document with its declared status and problem media type.
     fn into_response(self) -> warp::reply::Response {
-        warp_response(self.problem().definition().status, self.into_details())
+        warp_response(self.into_details())
     }
 }
 
@@ -999,15 +1001,13 @@ impl<E: Problem + Send> warp::Reply for Report<E> {
 impl<E: Problem + Sync> warp::Reply for &Report<E> {
     /// Renders an owned response without cloning or consuming the original error.
     fn into_response(self) -> warp::reply::Response {
-        warp_response(self.problem().definition().status, self.as_details())
+        warp_response(self.as_details())
     }
 }
 
 #[cfg(feature = "warp")]
-fn warp_response<D: serde::Serialize>(
-    status: StatusCode,
-    details: ProblemDetails<D>,
-) -> warp::reply::Response {
+fn warp_response<D: serde::Serialize>(details: ProblemDetails<D>) -> warp::reply::Response {
+    let status = details.status();
     warp::Reply::into_response(warp::reply::with_header(
         warp::reply::with_status(warp::reply::json(&details), status),
         "content-type",

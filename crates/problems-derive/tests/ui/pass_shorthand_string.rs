@@ -5,4 +5,7 @@ enum Failure {
     #[problem("409")]
     NameConflict,
 }
-fn main() {}
+fn main() {
+    use issues::Problem;
+    assert_eq!(Failure::NameConflict.detail().as_deref(), Some("409"));
+}
