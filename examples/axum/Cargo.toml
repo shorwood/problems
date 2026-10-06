@@ -1,0 +1,20 @@
+[package]
+name = "problems-example-axum"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+description = "An Axum application demonstrating typed HTTP problems."
+
+[dependencies]
+problems = { path = "../../crates/problems", features = ["aide"] }
+axum = { workspace = true }
+aide = { workspace = true, features = ["axum-json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+
+[dev-dependencies]
+hurl-test = "0.2.0"
+miette = { version = "7.6.0", features = ["fancy"] }

@@ -147,7 +147,7 @@ are omitted when absent.
 
 Return `Result<T, Report<E>>` from Axum handlers. Keep the concrete `Report<E>`
 return type when using Aide so it can read the response declarations.
-See the [runnable Axum example](https://docs.rs/crate/problems/latest/source/examples/axum.rs).
+See the [runnable Axum example](examples/axum/src/lib.rs).
 
 The application classifies failures and handles framework rejections. Creating
 or rendering a report does not log errors or automatically convert unrelated
@@ -155,7 +155,7 @@ failures into problems.
 
 See [runtime documentation](https://docs.rs/problems),
 [derive documentation](https://docs.rs/problems-derive),
-and [framework examples](https://docs.rs/crate/problems/latest/source/examples/) for the full API and attribute grammar.
+and [framework examples](examples/) for the full API and attribute grammar.
 
 ## Contributing
 

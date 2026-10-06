@@ -1,0 +1,17 @@
+[package]
+name = "problems-example-salvo"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+description = "A Salvo application demonstrating typed HTTP problems."
+
+[dependencies]
+problems = { path = "../../crates/problems", features = ["salvo"] }
+salvo = { workspace = true, features = ["server", "http1"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+
+[dev-dependencies]
+hurl-test = "0.2.0"
+miette = { version = "7.6.0", features = ["fancy"] }

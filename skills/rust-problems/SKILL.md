@@ -26,6 +26,6 @@ Rules distinguish API constraints from preferred defaults. Defaults yield to use
 
 ## Ground + verify
 
-Source checkout: `crates/problems/src/lib.rs` = runtime/adapters; `crates/problems-derive/src/lib.rs` = grammar; `crates/problems/examples/<framework>.rs` = integration patterns. Elsewhere: resolved version's [runtime docs](https://docs.rs/problems) + [derive docs](https://docs.rs/problems-derive). Avoid assuming every 0.1 release supports these APIs.
+Source checkout: `crates/problems/src/lib.rs` = runtime/adapters; `crates/problems-derive/src/lib.rs` = grammar; `examples/<framework>/src/lib.rs` = integration patterns. Elsewhere: resolved version's [runtime docs](https://docs.rs/problems) + [derive docs](https://docs.rs/problems-derive). Avoid assuming every 0.1 release supports these APIs.
 
 App changes: enable chosen framework; check HTTP status + media type + JSON + private-field absence. Library changes: existing integration/UI tests. Consumer task: stay within existing public API.

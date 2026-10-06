@@ -17,10 +17,14 @@
       };
     in {
       devShells.${system}.default = pkgs.mkShell {
+        nativeBuildInputs = [ pkgs.rustPlatform.bindgenHook ];
+        buildInputs = [ pkgs.curl pkgs.openssl pkgs.libxml2 ];
         packages = [
           rustToolchain
           pkgs.cargo-deny
           pkgs.just
+          pkgs.hurl
+          pkgs.pkg-config
         ];
         RUSTC = "${rustToolchain}/bin/rustc";
         RUSTDOC = "${rustToolchain}/bin/rustdoc";

@@ -1,0 +1,17 @@
+[package]
+name = "problems-example-rocket"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+publish = false
+description = "A Rocket application demonstrating typed HTTP problems."
+
+[dependencies]
+problems = { path = "../../crates/problems", features = ["rocket"] }
+rocket = { workspace = true, features = ["json"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
+
+[dev-dependencies]
+hurl-test = "0.2.0"
+miette = { version = "7.6.0", features = ["fancy"] }

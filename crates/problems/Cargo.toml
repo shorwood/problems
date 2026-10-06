@@ -50,35 +50,5 @@ salvo = { workspace = true, features = ["server", "http1", "test"] }
 warp = { workspace = true, features = ["server", "test"] }
 tower = { workspace = true, features = ["util"] }
 
-[[example]]
-name = "axum"
-required-features = ["derive", "axum"]
-test = true
-
-[[example]]
-name = "actix-web"
-required-features = ["derive", "actix-web"]
-test = true
-
-[[example]]
-name = "rocket"
-required-features = ["derive", "rocket"]
-test = true
-
-[[example]]
-name = "poem"
-required-features = ["derive", "poem"]
-test = true
-
-[[example]]
-name = "salvo"
-required-features = ["derive", "salvo"]
-test = true
-
-[[example]]
-name = "warp"
-required-features = ["derive", "warp"]
-test = true
-
 [package.metadata.docs.rs]
 all-features = true

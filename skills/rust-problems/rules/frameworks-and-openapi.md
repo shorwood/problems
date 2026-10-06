@@ -64,4 +64,4 @@ let response = (StatusCode::UNAUTHORIZED, report).into_response();
 assert_eq!(response.status(), StatusCode::UNAUTHORIZED); // Body still says 409.
 ```
 
-Extractors, unmatched routes, unrelated errors do not auto-convert. Add app-owned rejection adapter when requested; preserve unhandled rejections. See checkout `crates/problems/examples/axum.rs` (selective extractor adapter) or `warp.rs` (custom rejection recovery).
+Extractors, unmatched routes, unrelated errors do not auto-convert. Add app-owned rejection adapter when requested; preserve unhandled rejections. See checkout `examples/axum/src/lib.rs` (selective extractor adapter) or `examples/warp/src/lib.rs` (custom rejection recovery).
