@@ -1,0 +1,5 @@
+error: expected one of: `for`, parentheses, `unsafe`, `fn`, `extern`, identifier, `::`, `<`, `dyn`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
+ --> tests/ui/fail_from_mapping_missing_source.rs:3:16
+  |
+3 | #[problem(from(, |_error| Self::Invalid))]
+  |                ^

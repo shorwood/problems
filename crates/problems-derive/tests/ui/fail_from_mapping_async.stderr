@@ -1,0 +1,5 @@
+error: problem conversion closure cannot be async
+ --> tests/ui/fail_from_mapping_async.rs:3:22
+  |
+3 | #[problem(from(bool, async |_error| Self::Invalid))]
+  |                      ^^^^^

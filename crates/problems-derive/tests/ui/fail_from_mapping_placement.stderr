@@ -1,0 +1,26 @@
+error: unsupported problem declaration attribute
+
+         = help: use `type_uri`, `status`, `title`, or `detail` on a struct or enum variant
+
+ --> tests/ui/fail_from_mapping_placement.rs:3:41
+  |
+3 | #[problem(type_uri = "urn:test:struct", from(bool, |_error| Self))]
+  |                                         ^^^^
+
+error: unsupported problem declaration attribute
+
+         = help: use `type_uri`, `status`, `title`, or `detail` on a struct or enum variant
+
+  --> tests/ui/fail_from_mapping_placement.rs:10:15
+   |
+10 |     #[problem(from(bool, |_error| Self::Invalid))]
+   |               ^^^^
+
+error: unsupported problem attribute on the field
+
+         = help: use `#[problem(status)]`, `#[problem(data)]`, or `#[problem(data = "public_name")]` to select a field
+
+  --> tests/ui/fail_from_mapping_placement.rs:19:19
+   |
+19 |         #[problem(from(bool, |_error| Self::Invalid { value: false }))]
+   |                   ^^^^

@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `MissingError` in this scope
+ --> tests/ui/fail_from_mapping_source_type.rs:3:16
+  |
+3 | #[problem(from(MissingError, |_error| Self::Invalid))]
+  |                ^^^^^^^^^^^^ not found in this scope

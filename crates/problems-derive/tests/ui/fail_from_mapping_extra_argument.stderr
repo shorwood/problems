@@ -1,0 +1,5 @@
+error: unexpected tokens after problem conversion closure
+ --> tests/ui/fail_from_mapping_extra_argument.rs:3:46
+  |
+3 | #[problem(from(bool, |_error| Self::Invalid, extra))]
+  |                                              ^^^^^

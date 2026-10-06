@@ -1,0 +1,5 @@
+error: problem conversion requires exactly one closure parameter
+ --> tests/ui/fail_from_mapping_no_parameter.rs:3:22
+  |
+3 | #[problem(from(bool, || Self::Invalid))]
+  |                      ^^^^^^^^^^^^^^^^

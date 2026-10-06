@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail_from_mapping_return_type.rs:3:31
+  |
+3 | #[problem(from(bool, |_error| 42))]
+  |                               ^^ expected `Failure`, found integer

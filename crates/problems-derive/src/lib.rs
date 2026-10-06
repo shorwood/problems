@@ -12,7 +12,8 @@
 //!    detail placeholders against their fields.
 //! 2. Select and validate the runtime status and structured public data fields.
 //! 3. Generate definition constants, a data container when needed, and the
-//!    runtime `Problem` implementation. Invalid input produces compiler errors
+//!    runtime `Problem` implementation, and any explicitly requested `From`
+//!    conversions. Invalid input produces compiler errors
 //!    instead of a partial implementation.
 //!
 //! See [`macro@Problem`] for the supported attributes and examples.
@@ -23,7 +24,7 @@ use proc_macro2::{Span, TokenStream as Tokens, TokenTree};
 use quote::{ToTokens, format_ident, quote};
 use std::collections::{BTreeMap, BTreeSet};
 use syn::{
-    Attribute, Data, DeriveInput, Expr, Field, Fields, Ident, Lit, LitStr, Type,
+    Attribute, Data, DeriveInput, Expr, ExprClosure, Field, Fields, Ident, Lit, LitStr, Type,
     ext::IdentExt,
     parse::{ParseStream, Parser},
     parse_macro_input,
@@ -162,13 +163,55 @@ use syn::{
 ///            vec![&MissingRecord::DEFINITION]);
 /// ```
 ///
+/// # Explicit error conversions
+///
+/// On an enum, `from(SourceType, |error| expression)` generates a `From`
+/// implementation by invoking the supplied closure. Repeat this attribute for
+/// different source types; mappings may construct the same destination variant.
+/// The closure receives the source value by value and returns `Self`. It must
+/// be synchronous, take exactly one parameter, and require no captured context.
+/// Store the source in a diagnostic field when its cause should remain available;
+/// the mapping itself does not automatically retain it.
+///
+/// Use `thiserror::#[from]` for ordinary source wrapping and these mappings when
+/// classification needs application logic. They can coexist for different source
+/// types. Declaring the same source twice, or also using `thiserror::#[from]` for
+/// that source, produces a conflicting-implementation error. Rust checks closure
+/// return types and match exhaustiveness; enum generics and declared bounds are
+/// preserved in each conversion.
+///
+/// ```rust
+/// // --- Classify two source errors into the same public problem.
+/// #[derive(Debug, thiserror::Error, problems_derive::Problem)]
+/// #[problem(prefix = "urn:example")]
+/// #[problem(from(std::num::ParseIntError, |_error| Self::InvalidInput))]
+/// #[problem(from(std::str::ParseBoolError, |_error| Self::InvalidInput))]
+/// enum InputProblem {
+///     #[error("invalid input")]
+///     #[problem(400)]
+///     InvalidInput,
+/// }
+///
+/// // --- Let `?` apply the conversion for each source type.
+/// fn parse_number(input: &str) -> Result<u32, InputProblem> {
+///     Ok(input.parse()?)
+/// }
+/// fn parse_flag(input: &str) -> Result<bool, InputProblem> {
+///     Ok(input.parse()?)
+/// }
+///
+/// // --- Both parse failures select the same public variant.
+/// assert!(matches!(parse_number("bad"), Err(InputProblem::InvalidInput)));
+/// assert!(matches!(parse_flag("bad"), Err(InputProblem::InvalidInput)));
+/// ```
+///
 /// # Invalid declarations
 ///
 /// Errors identify the attribute, literal, field, or declaration that needs a
 /// change. Conflicts also point to the first declaration. Independent variants
 /// can report errors together: metadata errors come first, followed by data
 /// errors for declarations whose metadata was valid. Parsing stops at the first
-/// error within a declaration; unsupported input shapes, invalid enum prefixes,
+/// error within a declaration; unsupported input shapes, invalid enum options,
 /// and an unavailable runtime crate stop the whole expansion.
 #[proc_macro_derive(Problem, attributes(problem))]
 pub fn derive_problem(input: TokenStream) -> TokenStream {
@@ -181,7 +224,6 @@ pub fn derive_problem(input: TokenStream) -> TokenStream {
 fn expand_problem(input: &DeriveInput) -> MacroResult<Tokens> {
     let runtime = resolve_runtime_crate()?;
     let problem = ProblemDerive::parse(input)?;
-
     Ok(problem.generate(&runtime))
 }
 
@@ -484,6 +526,22 @@ impl Diagnostics {
 struct ProblemDerive<'a> {
     input: &'a DeriveInput,
     declarations: Vec<Declaration<'a>>,
+    from_mappings: Vec<ProblemFromMapping>,
+}
+
+/// A source type and closure used to generate one independent `From` implementation.
+struct ProblemFromMapping {
+    /// Input consumed by the generated conversion; may use the enum's generics.
+    source_type: Type,
+    /// Caller-written classification, preserved for Rust to type-check.
+    mapping_closure: ExprClosure,
+}
+
+/// Enum-level metadata and independently declared source conversions.
+#[derive(Default)]
+struct ProblemEnumAttributes {
+    prefix: Option<LitStr>,
+    from_mappings: Vec<ProblemFromMapping>,
 }
 
 /// One struct or enum variant, with its public contract and selected payload.
@@ -578,9 +636,12 @@ impl<'a> ProblemDerive<'a> {
     /// Resolve metadata before selecting public data; collect errors across declarations.
     fn parse(input: &'a DeriveInput) -> MacroResult<Self> {
         let syntaxes = DeclarationSyntax::collect(input)?;
-        let prefix = match input.data {
-            Data::Enum(_) => input.attrs.parse_prefix()?,
-            _ => None,
+        let ProblemEnumAttributes {
+            prefix,
+            from_mappings,
+        } = match input.data {
+            Data::Enum(_) => ProblemEnumAttributes::read(&input.attrs)?,
+            _ => ProblemEnumAttributes::default(),
         };
         let mut type_uris = BTreeMap::new();
         let mut constant_names = BTreeMap::new();
@@ -635,11 +696,13 @@ impl<'a> ProblemDerive<'a> {
                 declaration.public_data = public_data;
             }
         }
+
         // --- Generation must never receive a partially valid model.
         diagnostics.finish()?;
         Ok(Self {
             input,
             declarations,
+            from_mappings,
         })
     }
 }
@@ -782,6 +845,88 @@ mod kw {
     syn::custom_keyword!(prefix);
     syn::custom_keyword!(data);
     syn::custom_keyword!(transparent);
+    syn::custom_keyword!(from);
+}
+
+impl ProblemEnumAttributes {
+    /// Merge enum attributes: the prefix is unique, while conversions accumulate.
+    fn read(attributes: &[Attribute]) -> MacroResult<Self> {
+        let mut parsed = Self::default();
+        for attribute in attributes.problem_attributes() {
+            attribute.parse_problem_args(|input| parsed.parse_named(input))?;
+        }
+        Ok(parsed)
+    }
+
+    /// Keep enum options separate from metadata declared on individual variants.
+    fn parse_named(&mut self, input: ParseStream) -> MacroResult<()> {
+        if input.is_empty() {
+            return Err(ProblemDiagnostic::EmptyAttribute.at_span(input.span()));
+        }
+        while !input.is_empty() {
+            if input.peek(kw::from) {
+                input.parse::<kw::from>()?;
+                self.from_mappings.push(input.parse()?);
+            } else if input.peek(kw::prefix) {
+                let keyword: kw::prefix = input.parse()?;
+                if self.prefix.is_some() {
+                    return Err(
+                        ProblemDiagnostic::DuplicateAttribute { name: "prefix" }.at(keyword)
+                    );
+                }
+                input.parse::<syn::Token![=]>()?;
+                let value: LitStr = input.parse()?;
+                if value.value().is_empty() {
+                    return Err(ProblemDiagnostic::EmptyPrefix.at(&value));
+                }
+                self.prefix = Some(value);
+            } else {
+                let path: syn::Path = input.parse()?;
+                return Err(ProblemDiagnostic::UnknownEnumAttribute.at(path));
+            }
+            if !input.is_empty() {
+                input.parse::<syn::Token![,]>()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl syn::parse::Parse for ProblemFromMapping {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // --- Read the source type and conversion without rewriting the closure body.
+        let arguments;
+        syn::parenthesized!(arguments in input);
+        let source_type: Type = arguments.parse()?;
+        arguments.parse::<syn::Token![,]>()?;
+        let mapping_closure: ExprClosure = arguments.parse()?;
+
+        // --- Enforce the synchronous, single-input contract of `From::from`.
+        if mapping_closure.inputs.len() != 1 {
+            return Err(syn::Error::new_spanned(
+                &mapping_closure,
+                "problem conversion requires exactly one closure parameter",
+            ));
+        }
+        if let Some(asyncness) = &mapping_closure.asyncness {
+            return Err(syn::Error::new_spanned(
+                asyncness,
+                "problem conversion closure cannot be async",
+            ));
+        }
+
+        // --- Accept a trailing comma, but reject additional conversion arguments.
+        if arguments.peek(syn::Token![,]) {
+            arguments.parse::<syn::Token![,]>()?;
+        }
+        if !arguments.is_empty() {
+            return Err(arguments.error("unexpected tokens after problem conversion closure"));
+        }
+        Ok(Self {
+            source_type,
+            mapping_closure,
+        })
+    }
 }
 
 /// Explicit metadata before defaults, prefix expansion, and field resolution.
@@ -1196,12 +1341,16 @@ impl DetailReference {
 /****************************************/
 
 impl ProblemDerive<'_> {
-    /// Emit the payload container, definition constants, and runtime trait implementation.
+    /// Emit the public contract and each explicitly requested source conversion.
     fn generate(&self, runtime: &Tokens) -> Tokens {
         let data = self.data_container(runtime);
         let constants = self.definition_constants(runtime);
         let implementation = self.problem_implementation(runtime);
-        quote!(#data #constants #implementation)
+        let from_implementations = self
+            .from_mappings
+            .iter()
+            .map(|mapping| mapping.generate_from_impl(self.input));
+        quote!(#data #constants #implementation #(#from_implementations)*)
     }
 
     fn definition_constants(&self, runtime: &Tokens) -> Tokens {
@@ -1312,6 +1461,28 @@ impl ProblemDerive<'_> {
                 };
                 quote!(::std::iter::Iterator::chain(#previous, #next))
             })
+    }
+}
+
+impl ProblemFromMapping {
+    /// Use only the enum's declared bounds; public formatting bounds belong to `Problem`.
+    fn generate_from_impl(&self, input: &DeriveInput) -> Tokens {
+        let problem_name = &input.ident;
+        let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
+        let source_type = &self.source_type;
+        let mapping_closure = &self.mapping_closure;
+        quote! {
+            impl #impl_generics ::core::convert::From<#source_type>
+                for #problem_name #type_generics #where_clause
+            {
+                fn from(__problem_source: #source_type) -> Self {
+                    // The expected signature lets Rust infer closure parameter types,
+                    // including parameters whose fields are read in the closure body.
+                    let __problem_map_error: fn(#source_type) -> Self = #mapping_closure;
+                    __problem_map_error(__problem_source)
+                }
+            }
+        }
     }
 }
 
@@ -1685,7 +1856,6 @@ impl ProblemAttributeExt for Attribute {
 /// Read enum-level options and detect exclusive transparent forwarding.
 trait ProblemAttributesExt {
     fn problem_attributes(&self) -> impl Iterator<Item = &Attribute>;
-    fn parse_prefix(&self) -> MacroResult<Option<LitStr>>;
     fn is_transparent(&self) -> MacroResult<bool>;
 }
 
@@ -1693,40 +1863,6 @@ impl ProblemAttributesExt for [Attribute] {
     fn problem_attributes(&self) -> impl Iterator<Item = &Attribute> {
         self.iter()
             .filter(|attribute| attribute.path().is_ident("problem"))
-    }
-
-    fn parse_prefix(&self) -> MacroResult<Option<LitStr>> {
-        let mut prefix = None;
-        for attribute in self.problem_attributes() {
-            attribute.parse_problem_args(|input: ParseStream| {
-                if input.is_empty() {
-                    return Err(ProblemDiagnostic::EmptyAttribute.at_span(input.span()));
-                }
-                while !input.is_empty() {
-                    if !input.peek(kw::prefix) {
-                        let path: syn::Path = input.parse()?;
-                        return Err(ProblemDiagnostic::UnknownEnumAttribute.at(path));
-                    }
-                    let keyword: kw::prefix = input.parse()?;
-                    if prefix.is_some() {
-                        return Err(
-                            ProblemDiagnostic::DuplicateAttribute { name: "prefix" }.at(keyword)
-                        );
-                    }
-                    input.parse::<syn::Token![=]>()?;
-                    let value: LitStr = input.parse()?;
-                    if value.value().is_empty() {
-                        return Err(ProblemDiagnostic::EmptyPrefix.at(&value));
-                    }
-                    prefix = Some(value);
-                    if !input.is_empty() {
-                        input.parse::<syn::Token![,]>()?;
-                    }
-                }
-                Ok(())
-            })?;
-        }
-        Ok(prefix)
     }
 
     fn is_transparent(&self) -> MacroResult<bool> {
