@@ -52,6 +52,61 @@ assert_eq!(handler().unwrap_err().problem().status(), StatusCode::NOT_FOUND);
 
 Transparent: single-field tuple enum variant only. Forwards definition + runtime status + detail + instance + data. No local constant, metadata, or field selections. `#[error(transparent)]` alone forwards diagnostics only.
 
+## Explicit source-error mappings (0.1.1)
+
+Enum-level `#[problem(from(SourceType, |error| expression))]` generates
+`From<SourceType>` for the problem enum. Repeat it for different source types;
+multiple sources may select the same destination variant. It supports `.into()`
+and `?`, preserving enum generics and declared bounds.
+
+- Use `thiserror::#[from]` for ordinary source wrapping; use `problem(from(...))`
+  when application logic selects the public problem. They coexist for different
+  source types. Duplicate or overlapping implementations are compiler errors.
+- The closure consumes one source value and returns `Self`; it must be synchronous
+  and need no captured context. Rust checks return types and match exhaustiveness.
+- Source retention is explicit: move a cause into a diagnostic field or forward
+  through an existing conversion. Mapping does not automatically preserve it.
+- Supported only on enums, not structs, variants, or fields. Extra context
+  parameters are not supported; keep those mappings in named functions called
+  from `map_err` closures.
+
+```rust
+use problems::Problem;
+
+// --- Classify an application error and a parser error into one public enum.
+enum InputError {
+    Invalid,
+    Storage(std::io::Error),
+}
+
+#[derive(Debug, thiserror::Error, Problem)]
+#[problem(prefix = "urn:example")]
+#[problem(from(InputError, |error| match error {
+    InputError::Invalid => Self::InvalidInput,
+    InputError::Storage(source) => source.into(),
+}))]
+#[problem(from(std::num::ParseIntError, |_error| Self::InvalidInput))]
+enum InputProblem {
+    #[error("invalid input")]
+    #[problem(400)]
+    InvalidInput,
+    #[error("storage operation failed")]
+    Storage { #[from] source: std::io::Error },
+}
+
+// --- Use the parser conversion through `?` and the application conversion directly.
+fn parse_number(input: &str) -> Result<u32, InputProblem> {
+    Ok(input.parse()?)
+}
+assert!(matches!(parse_number("bad"), Err(InputProblem::InvalidInput)));
+assert!(matches!(InputProblem::from(InputError::Invalid), InputProblem::InvalidInput));
+
+// --- Forward the storage cause without making it public detail.
+let problem = InputProblem::from(InputError::Storage(std::io::Error::other("private cause")));
+assert_eq!(std::error::Error::source(&problem).unwrap().to_string(), "private cause");
+assert_eq!(problem.detail(), None);
+```
+
 ## Manual implementation
 
 Without derive: supply `Data`, `DataRef<'a>`, `definition()`, `definitions()`. Optional payload/detail/instance default absent; `status()` defaults to definition status. Include every possible definition in static iterator.

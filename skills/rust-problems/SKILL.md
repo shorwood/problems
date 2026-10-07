@@ -1,13 +1,13 @@
 ---
 name: rust-problems
-description: Use the Rust problems crate to declare RFC 9457 errors, render framework responses, generate Aide OpenAPI metadata, or decode typed problem documents. Apply when integrating or troubleshooting this crate; not for general Rust error handling.
+description: Use the Rust problems crate to declare RFC 9457 errors, map source errors, render framework responses, generate Aide OpenAPI metadata, or decode typed problem documents. Apply when integrating or troubleshooting this crate; not for general Rust error handling.
 metadata:
   library-version: "0.1.1"
 ---
 
 # Rust Problems 0.1.1
 
-Check resolved version + enabled features first. Target: current repository capabilities, treated as 0.1.1. Preserve app error classification + public contract.
+Check resolved version + enabled features first. Target: problems + problems-derive 0.1.1. Preserve app error classification + public contract.
 
 `Problem` = public contract. `Report<E>` = retained diagnostic error. `ProblemDetails<D>` = outgoing document. `ProblemDocument<D>` = received document. Public exposure explicit; framework rejection handling app-owned.
 
@@ -17,7 +17,7 @@ Rules distinguish API constraints from preferred defaults. Defaults yield to use
 
 | Task | Read |
 | --- | --- |
-| Struct/enum metadata, stable URI, transparent wrapper, manual impl | [Declarations](rules/declarations.md) |
+| Struct/enum metadata, explicit From mappings, transparent wrapper, manual impl | [Declarations](rules/declarations.md) |
 | Detail formatting, public data, private sources | [Detail + data](rules/detail-and-data.md) |
 | Field-derived status, fallback, static definitions | [Runtime status](rules/runtime-status.md) |
 | Wrap error, borrow/move payload, keep diagnostics, set instance | [Reports + ownership](rules/reports-and-ownership.md) |
